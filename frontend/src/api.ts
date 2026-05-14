@@ -85,6 +85,16 @@ export type ScheduledPost = {
   created_at: string | null
 }
 
+export type ScheduleRules = {
+  active_weekdays: number[]
+  posts_per_day: number
+  mode: 'exact' | 'interval'
+  exact_time: string | null
+  start_time: string | null
+  end_time: string | null
+  lookahead_days: number
+}
+
 export type RecommendationCard = {
   product: {
     id: number

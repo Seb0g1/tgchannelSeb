@@ -133,10 +133,14 @@ class Repository:
     def get_draft(self, draft_id: int) -> Draft | None:
         return self.session.get(Draft, draft_id)
 
-    def list_drafts(self, status: str = "pending", limit: int = 10, offset: int = 0) -> list[Draft]:
-        stmt = select(Draft).order_by(Draft.created_at.desc()).limit(limit).offset(offset)
+    def list_drafts(self, status: str = "pending", limit: int = 10, offset: int = 0, order: str = "desc") -> list[Draft]:
+        stmt = select(Draft).limit(limit).offset(offset)
         if status != "all":
             stmt = stmt.where(Draft.status == status)
+        if order == "asc":
+            stmt = stmt.order_by(Draft.created_at.asc())
+        else:
+            stmt = stmt.order_by(Draft.created_at.desc())
         return list(self.session.scalars(stmt))
 
     def count_drafts(self, status: str = "pending") -> int:
@@ -288,6 +292,18 @@ class Repository:
         self.session.add(item)
         self.session.commit()
         return item
+
+    def scheduled_draft_ids(self, status: str = "scheduled") -> set[int]:
+        stmt = select(ScheduledPost.draft_id)
+        if status != "all":
+            stmt = stmt.where(ScheduledPost.status == status)
+        return {int(draft_id) for draft_id in self.session.scalars(stmt) if draft_id is not None}
+
+    def scheduled_product_ids(self, status: str = "scheduled") -> set[int]:
+        stmt = select(Draft.product_id).join(ScheduledPost, ScheduledPost.draft_id == Draft.id)
+        if status != "all":
+            stmt = stmt.where(ScheduledPost.status == status)
+        return {int(product_id) for product_id in self.session.scalars(stmt) if product_id is not None}
 
     def delete_scheduled_post(self, scheduled_id: int) -> bool:
         item = self.session.get(ScheduledPost, scheduled_id)

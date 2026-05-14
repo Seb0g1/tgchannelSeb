@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import secrets
-import time
+import time as time_module
 import hmac
 import hashlib
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date, datetime, time as dt_time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 
 import httpx
@@ -135,8 +136,36 @@ class ScheduleCreate(BaseModel):
     scheduled_at: datetime
 
 
+class ScheduleBulkCreate(BaseModel):
+    posts_per_day: int
+    days_count: int
+    start_date: date
+    start_time: dt_time = dt_time(10, 0)
+    end_time: dt_time = dt_time(22, 0)
+    draft_limit: int = 1000
+
+
+class ScheduleAutoPlanCreate(BaseModel):
+    date: date
+    posts_count: int
+    mode: str = "interval"
+    exact_time: dt_time | None = None
+    start_time: dt_time | None = None
+    end_time: dt_time | None = None
+
+
+class ScheduleRulesPayload(BaseModel):
+    active_weekdays: list[int]
+    posts_per_day: int
+    mode: str = "interval"
+    exact_time: dt_time | None = None
+    start_time: dt_time | None = None
+    end_time: dt_time | None = None
+    lookahead_days: int = 7
+
+
 def create_session_token(username: str, settings: Settings) -> str:
-    expires_at = int(time.time()) + 60 * 60 * 24 * 7
+    expires_at = int(time_module.time()) + 60 * 60 * 24 * 7
     payload = f"{username}:{expires_at}"
     signature = hmac.new(settings.web_session_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}:{signature}"
@@ -154,7 +183,7 @@ def verify_session_token(token: str | None, settings: Settings) -> str | None:
     if not hmac.compare_digest(signature, expected):
         return None
     try:
-        if int(raw_expires_at) < int(time.time()):
+        if int(raw_expires_at) < int(time_module.time()):
             return None
     except ValueError:
         return None
@@ -203,6 +232,53 @@ def product_payload(product: Product) -> dict:
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
     }
+
+
+def default_schedule_rules() -> dict[str, object]:
+    return {
+        "active_weekdays": [0, 1, 2, 3, 4, 5, 6],
+        "posts_per_day": 1,
+        "mode": "interval",
+        "exact_time": "12:00",
+        "start_time": "10:00",
+        "end_time": "22:00",
+        "lookahead_days": 7,
+    }
+
+
+def normalize_schedule_rules(raw: dict[str, object] | None) -> dict[str, object]:
+    rules = default_schedule_rules()
+    if not isinstance(raw, dict):
+        return rules
+    if isinstance(raw.get("active_weekdays"), list):
+        weekdays = []
+        for value in raw["active_weekdays"]:
+            try:
+                weekday = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= weekday <= 6:
+                weekdays.append(weekday)
+        if weekdays:
+            rules["active_weekdays"] = sorted(set(weekdays))
+    try:
+        posts_per_day = int(raw.get("posts_per_day", rules["posts_per_day"]))
+        rules["posts_per_day"] = max(1, posts_per_day)
+    except (TypeError, ValueError):
+        pass
+    mode = str(raw.get("mode", rules["mode"])).strip()
+    if mode in {"exact", "interval"}:
+        rules["mode"] = mode
+    for key in ("exact_time", "start_time", "end_time"):
+        value = raw.get(key)
+        if value:
+            rules[key] = str(value)[:5]
+    try:
+        lookahead_days = int(raw.get("lookahead_days", rules["lookahead_days"]))
+        rules["lookahead_days"] = max(1, min(60, lookahead_days))
+    except (TypeError, ValueError):
+        pass
+    return rules
 
 
 def draft_payload(draft: Draft) -> dict:
@@ -697,6 +773,43 @@ def create_web_app() -> FastAPI:
             items = repo.list_scheduled_posts("all", limit=200)
         return {"items": [scheduled_payload(item) for item in items]}
 
+    @app.get("/api/schedule/rules")
+    async def get_schedule_rules(_: str = Depends(require_admin)):
+        with session_factory() as session:
+            repo = Repository(session)
+            raw = repo.get_setting("schedule_rules", "")
+        try:
+            parsed = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            parsed = None
+        return normalize_schedule_rules(parsed)
+
+    @app.put("/api/schedule/rules")
+    async def update_schedule_rules(payload: ScheduleRulesPayload, _: str = Depends(require_admin)):
+        if payload.posts_per_day < 1:
+            raise HTTPException(status_code=400, detail="posts_per_day must be at least 1")
+        if payload.mode not in {"exact", "interval"}:
+            raise HTTPException(status_code=400, detail="mode must be exact or interval")
+        if payload.mode == "exact" and payload.exact_time is None:
+            raise HTTPException(status_code=400, detail="exact_time is required for exact mode")
+        if payload.mode == "interval" and (payload.start_time is None or payload.end_time is None):
+            raise HTTPException(status_code=400, detail="start_time and end_time are required for interval mode")
+        rules = normalize_schedule_rules(
+            {
+                "active_weekdays": payload.active_weekdays,
+                "posts_per_day": payload.posts_per_day,
+                "mode": payload.mode,
+                "exact_time": payload.exact_time.strftime("%H:%M") if payload.exact_time else None,
+                "start_time": payload.start_time.strftime("%H:%M") if payload.start_time else None,
+                "end_time": payload.end_time.strftime("%H:%M") if payload.end_time else None,
+                "lookahead_days": payload.lookahead_days,
+            }
+        )
+        with session_factory() as session:
+            repo = Repository(session)
+            repo.set_setting("schedule_rules", json.dumps(rules, ensure_ascii=False))
+        return rules
+
     @app.post("/api/schedule")
     async def create_schedule(payload: ScheduleCreate, _: str = Depends(require_admin)):
         scheduled_at = payload.scheduled_at
@@ -708,6 +821,143 @@ def create_web_app() -> FastAPI:
                 raise HTTPException(status_code=404, detail="Draft not found")
             item = repo.create_scheduled_post(payload.draft_id, scheduled_at)
         return scheduled_payload(item)
+
+    @app.post("/api/schedule/rules/apply")
+    async def apply_schedule_rules(_: str = Depends(require_admin)):
+        return await post_service.fill_schedule_from_rules()
+
+    @app.post("/api/schedule/bulk")
+    async def create_bulk_schedule(payload: ScheduleBulkCreate, _: str = Depends(require_admin)):
+        if payload.posts_per_day < 1:
+            raise HTTPException(status_code=400, detail="posts_per_day must be at least 1")
+        if payload.days_count < 1:
+            raise HTTPException(status_code=400, detail="days_count must be at least 1")
+
+        moscow = ZoneInfo("Europe/Moscow")
+        with session_factory() as session:
+            repo = Repository(session)
+            pending_drafts = repo.list_drafts("pending", limit=max(1, payload.draft_limit), offset=0, order="asc")
+            scheduled_draft_ids = repo.scheduled_draft_ids()
+            available_drafts = [draft for draft in pending_drafts if draft.id not in scheduled_draft_ids]
+            if not available_drafts:
+                return {
+                    "created": 0,
+                    "requested": payload.posts_per_day * payload.days_count,
+                    "skipped_existing": 0,
+                    "items": [],
+                }
+
+            if payload.end_time <= payload.start_time:
+                start_minutes = payload.start_time.hour * 60 + payload.start_time.minute
+                fallback_minutes = min(start_minutes + 60, 23 * 60 + 59)
+                end_time = dt_time(fallback_minutes // 60, fallback_minutes % 60)
+            else:
+                end_time = payload.end_time
+
+            def day_slots() -> list[time]:
+                if payload.posts_per_day == 1:
+                    return [payload.start_time]
+                start_minutes = payload.start_time.hour * 60 + payload.start_time.minute
+                end_minutes = end_time.hour * 60 + end_time.minute
+                if end_minutes <= start_minutes:
+                    end_minutes = start_minutes + 60
+                step = (end_minutes - start_minutes) / (payload.posts_per_day - 1)
+                slots: list[time] = []
+                for index in range(payload.posts_per_day):
+                    minutes = int(round(start_minutes + (step * index)))
+                    hour = max(0, min(23, minutes // 60))
+                    minute = max(0, min(59, minutes % 60))
+                    slots.append(dt_time(hour, minute))
+                return slots
+
+            slots = day_slots()
+            created = []
+            draft_index = 0
+            requested = payload.posts_per_day * payload.days_count
+            for day_offset in range(payload.days_count):
+                day = payload.start_date + timedelta(days=day_offset)
+                for slot in slots:
+                    if draft_index >= len(available_drafts):
+                        break
+                    draft = available_drafts[draft_index]
+                    draft_index += 1
+                    local_dt = datetime.combine(day, slot, tzinfo=moscow)
+                    scheduled_dt = local_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                    item = repo.create_scheduled_post(draft.id, scheduled_dt)
+                    created.append(item)
+                if draft_index >= len(available_drafts):
+                    break
+
+        return {
+            "created": len(created),
+            "requested": requested,
+            "skipped_existing": len(pending_drafts) - len(available_drafts),
+            "items": [scheduled_payload(item) for item in created],
+        }
+
+    @app.post("/api/schedule/auto-plan")
+    async def create_auto_plan(payload: ScheduleAutoPlanCreate, _: str = Depends(require_admin)):
+        if payload.posts_count < 1:
+            raise HTTPException(status_code=400, detail="posts_count must be at least 1")
+        if payload.mode not in {"exact", "interval"}:
+            raise HTTPException(status_code=400, detail="mode must be exact or interval")
+
+        if payload.mode == "exact":
+            if payload.exact_time is None:
+                raise HTTPException(status_code=400, detail="exact_time is required for exact mode")
+            slots = [payload.exact_time for _ in range(payload.posts_count)]
+        else:
+            if payload.start_time is None or payload.end_time is None:
+                raise HTTPException(status_code=400, detail="start_time and end_time are required for interval mode")
+            start_minutes = payload.start_time.hour * 60 + payload.start_time.minute
+            end_minutes = payload.end_time.hour * 60 + payload.end_time.minute
+            if end_minutes <= start_minutes:
+                raise HTTPException(status_code=400, detail="end_time must be after start_time")
+            if payload.posts_count == 1:
+                slots = [payload.start_time]
+            else:
+                step = (end_minutes - start_minutes) / (payload.posts_count - 1)
+                slots = []
+                for index in range(payload.posts_count):
+                    minutes = int(round(start_minutes + (step * index)))
+                    hour = max(0, min(23, minutes // 60))
+                    minute = max(0, min(59, minutes % 60))
+                    slots.append(dt_time(hour, minute))
+
+        moscow = ZoneInfo("Europe/Moscow")
+        created: list[dict[str, object]] = []
+        with session_factory() as session:
+            repo = Repository(session)
+            candidates = repo.list_products("new", limit=1000, offset=0)
+            pending_product_ids = {draft.product_id for draft in repo.list_drafts("pending", limit=1000, offset=0)}
+            scheduled_product_ids = repo.scheduled_product_ids()
+            ranked = [
+                product
+                for product in post_service._rank_products(candidates, repo)
+                if product.id not in pending_product_ids and product.id not in scheduled_product_ids
+            ][: payload.posts_count]
+
+        for index, product in enumerate(ranked):
+            slot = slots[min(index, len(slots) - 1)]
+            await post_service.ensure_premium_image(product.id)
+            draft = await post_service.create_draft_for_product(product.id, force_new=True)
+            if draft is None:
+                continue
+            local_dt = datetime.combine(payload.date, slot, tzinfo=moscow)
+            scheduled_dt = local_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            with session_factory() as session:
+                repo = Repository(session)
+                item = repo.create_scheduled_post(draft.id, scheduled_dt)
+                repo.log_product_event(product.id, "auto_scheduled", value=payload.mode, note=slot.strftime("%H:%M"))
+            created.append(scheduled_payload(item))
+
+        return {
+            "created": len(created),
+            "requested": payload.posts_count,
+            "mode": payload.mode,
+            "date": payload.date.isoformat(),
+            "items": created,
+        }
 
     @app.delete("/api/schedule/{scheduled_id}")
     async def delete_schedule(scheduled_id: int, _: str = Depends(require_admin)):
@@ -723,180 +973,15 @@ def create_web_app() -> FastAPI:
             product = repo.get_product(product_id)
             if product is None:
                 raise HTTPException(status_code=404, detail="Product not found")
-            engine = repo.get_setting("image_engine", settings.image_engine)
-            if engine == "huggingface":
-                dynamic_settings = settings.model_copy(
-                    update={
-                        "hf_image_model": repo.get_setting("hf_image_model", settings.hf_image_model),
-                        "hf_image_provider": repo.get_setting("hf_image_provider", settings.hf_image_provider),
-                        "hf_image_width": int(repo.get_setting("hf_image_width", str(settings.hf_image_width))),
-                        "hf_image_height": int(repo.get_setting("hf_image_height", str(settings.hf_image_height))),
-                        "image_generation_mode": repo.get_setting("image_generation_mode", settings.image_generation_mode),
-                    }
-                )
-                styler = HuggingFaceImageStyler(dynamic_settings)
-                try:
-                    image_path = await styler.generate(product)
-                except ImageGenerationError as exc:
-                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
-                repo.update_product_styled_image(product, image_path)
-                repo.log_product_event(product.id, "image_generated", value="huggingface", note=image_path)
-                return {"status": "generated", "message": "Premium image generated.", "product": product_payload(product)}
-            if engine == "local_sdcpp":
-                dynamic_settings = settings.model_copy(
-                    update={
-                        "image_generation_mode": repo.get_setting("image_generation_mode", settings.image_generation_mode),
-                        "local_sdcpp_bin": repo.get_setting("local_sdcpp_bin", settings.local_sdcpp_bin),
-                        "local_image_model": repo.get_setting("local_image_model", settings.local_image_model),
-                        "local_image_width": int(repo.get_setting("local_image_width", str(settings.local_image_width))),
-                        "local_image_height": int(repo.get_setting("local_image_height", str(settings.local_image_height))),
-                        "local_image_steps": int(repo.get_setting("local_image_steps", str(settings.local_image_steps))),
-                        "local_image_strength": float(repo.get_setting("local_image_strength", str(settings.local_image_strength))),
-                        "local_image_cfg_scale": float(repo.get_setting("local_image_cfg_scale", str(settings.local_image_cfg_scale))),
-                        "local_image_seed": int(repo.get_setting("local_image_seed", str(settings.local_image_seed))),
-                        "local_image_threads": int(repo.get_setting("local_image_threads", str(settings.local_image_threads))),
-                        "local_image_timeout_seconds": int(
-                            repo.get_setting("local_image_timeout_seconds", str(settings.local_image_timeout_seconds))
-                        ),
-                    }
-                )
-                styler = LocalSdcppImageStyler(dynamic_settings)
-                try:
-                    image_path = await styler.generate(product)
-                except ImageGenerationError as exc:
-                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
-                repo.update_product_styled_image(product, image_path)
-                repo.log_product_event(product.id, "image_generated", value="local_sdcpp", note=image_path)
-                return {"status": "generated", "message": "Local premium image generated.", "product": product_payload(product)}
-            if engine == "freetheai":
-                dynamic_settings = settings.model_copy(
-                    update={
-                        "freetheai_api_key": repo.get_setting("freetheai_api_key", settings.freetheai_api_key or ""),
-                        "freetheai_base_url": repo.get_setting("freetheai_base_url", settings.freetheai_base_url),
-                        "freetheai_image_model": repo.get_setting("freetheai_image_model", settings.freetheai_image_model),
-                        "freetheai_timeout_seconds": int(
-                            repo.get_setting("freetheai_timeout_seconds", str(settings.freetheai_timeout_seconds))
-                        ),
-                    }
-                )
-                styler = FreeTheAIImageStyler(dynamic_settings)
-                try:
-                    image_path = await styler.generate(product, max_attempts=1)
-                except ImageGenerationError as exc:
-                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
-                repo.update_product_styled_image(product, image_path)
-                repo.log_product_event(product.id, "image_generated", value="freetheai", note=image_path)
-                return {"status": "generated", "message": "FreeTheAI premium image generated.", "product": product_payload(product)}
-            if engine == "pollinations":
-                dynamic_settings = settings.model_copy(
-                    update={
-                        "pollinations_api_key": repo.get_setting(
-                            "pollinations_api_key",
-                            settings.pollinations_api_key or "",
-                        ),
-                        "pollinations_base_url": repo.get_setting(
-                            "pollinations_base_url",
-                            settings.pollinations_base_url,
-                        ),
-                        "pollinations_image_model": repo.get_setting(
-                            "pollinations_image_model",
-                            settings.pollinations_image_model,
-                        ),
-                        "pollinations_image_width": int(
-                            repo.get_setting("pollinations_image_width", str(settings.pollinations_image_width))
-                        ),
-                        "pollinations_image_height": int(
-                            repo.get_setting("pollinations_image_height", str(settings.pollinations_image_height))
-                        ),
-                        "pollinations_image_quality": repo.get_setting(
-                            "pollinations_image_quality",
-                            settings.pollinations_image_quality,
-                        ),
-                        "pollinations_image_timeout_seconds": int(
-                            repo.get_setting(
-                                "pollinations_image_timeout_seconds",
-                                str(settings.pollinations_image_timeout_seconds),
-                            )
-                        ),
-                        "image_generation_mode": repo.get_setting("image_generation_mode", settings.image_generation_mode),
-                    }
-                )
-                styler = PollinationsImageStyler(dynamic_settings)
-                try:
-                    image_path = await styler.generate(product)
-                except ImageGenerationError as exc:
-                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
-                repo.update_product_styled_image(product, image_path)
-                repo.log_product_event(product.id, "image_generated", value="pollinations", note=image_path)
-                return {"status": "generated", "message": "Pollinations premium image generated.", "product": product_payload(product)}
-            if engine == "cloudflare_worker":
-                dynamic_settings = settings.model_copy(
-                    update={
-                        "cloudflare_worker_url": repo.get_setting(
-                            "cloudflare_worker_url",
-                            settings.cloudflare_worker_url or "",
-                        ),
-                        "cloudflare_worker_api_key": repo.get_setting(
-                            "cloudflare_worker_api_key",
-                            settings.cloudflare_worker_api_key or "",
-                        ),
-                        "cloudflare_worker_timeout_seconds": int(
-                            repo.get_setting(
-                                "cloudflare_worker_timeout_seconds",
-                                str(settings.cloudflare_worker_timeout_seconds),
-                            )
-                        ),
-                        "pollinations_image_width": int(
-                            repo.get_setting("pollinations_image_width", str(settings.pollinations_image_width))
-                        ),
-                        "pollinations_image_height": int(
-                            repo.get_setting("pollinations_image_height", str(settings.pollinations_image_height))
-                        ),
-                    }
-                )
-                styler = CloudflareWorkerImageStyler(dynamic_settings)
-                try:
-                    image_path = await styler.generate(product)
-                except ImageGenerationError as exc:
-                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
-                repo.update_product_styled_image(product, image_path)
-                repo.log_product_event(product.id, "image_generated", value="cloudflare_worker", note=image_path)
-                return {
-                    "status": "generated",
-                    "message": "Cloudflare Worker premium image generated.",
-                    "product": product_payload(product),
-                }
-            if engine == "codex_sale":
-                dynamic_settings = settings.model_copy(
-                    update={
-                        "codex_sale_api_key": repo.get_setting("codex_sale_api_key", settings.codex_sale_api_key or ""),
-                        "codex_sale_base_url": repo.get_setting("codex_sale_base_url", settings.codex_sale_base_url),
-                        "codex_sale_image_model": repo.get_setting("codex_sale_image_model", settings.codex_sale_image_model),
-                        "codex_sale_image_size": repo.get_setting("codex_sale_image_size", settings.codex_sale_image_size),
-                        "codex_sale_timeout_seconds": int(
-                            repo.get_setting("codex_sale_timeout_seconds", str(settings.codex_sale_timeout_seconds))
-                        ),
-                    }
-                )
-                styler = CodexSaleImageStyler(dynamic_settings)
-                try:
-                    image_path = await styler.generate(product)
-                except ImageGenerationError as exc:
-                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
-                repo.update_product_styled_image(product, image_path)
-                repo.log_product_event(product.id, "image_generated", value="codex_sale", note=image_path)
-                return {
-                    "status": "generated",
-                    "message": "Codex Sale premium image generated.",
-                    "product": product_payload(product),
-                }
-            if engine != "comfyui":
-                return {
-                    "status": "not_configured",
-                    "message": "Set image_engine=codex_sale, cloudflare_worker, pollinations, freetheai, local_sdcpp or huggingface in settings before generation.",
-                    "product": product_payload(product),
-                }
-        return {"status": "queued", "message": "ComfyUI integration placeholder is ready for workflow wiring."}
+        image_path = await post_service.ensure_premium_image(product_id)
+        with session_factory() as session:
+            repo = Repository(session)
+            fresh = repo.get_product(product_id)
+        if image_path and fresh:
+            return {"status": "generated", "message": "Premium image generated.", "product": product_payload(fresh)}
+        if fresh:
+            return {"status": "failed", "message": "Premium image generation failed.", "product": product_payload(fresh)}
+        return {"status": "failed", "message": "Product not found"}
 
     @app.get("/api/products/{product_id}/insights")
     async def product_insights(product_id: int, _: str = Depends(require_admin)):

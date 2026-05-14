@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, time as dt_time, timedelta, timezone
 from html import escape
 from io import BytesIO
 from pathlib import Path
 from collections.abc import Callable
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy.orm import Session
@@ -17,6 +18,15 @@ from telegram.error import BadRequest, TelegramError
 from telegram.ext import Application
 
 from app.config import Settings
+from app.image_styler import (
+    CloudflareWorkerImageStyler,
+    CodexSaleImageStyler,
+    FreeTheAIImageStyler,
+    HuggingFaceImageStyler,
+    ImageGenerationError,
+    LocalSdcppImageStyler,
+    PollinationsImageStyler,
+)
 from app.llm import FreeTheAITextGenerator, OllamaGenerator, OpenRouterTextGenerator, PollinationsTextGenerator, TextGenerationError
 from app.models import Draft, Product
 from app.ozon_client import OzonClient
@@ -230,18 +240,285 @@ class PostService:
     async def sync_and_prepare(self, app: Application) -> None:
         try:
             await self.sync_products()
-            draft = await self.create_next_draft()
-            if draft is None:
-                await app.bot.send_message(self.settings.telegram_owner_id, "Новых товаров для постинга нет.")
-                return
             mode = self._get_str_setting("app_mode", self.settings.app_mode)
             if mode == "auto":
-                await self.publish_draft(app, draft.id)
+                await self.fill_schedule_from_rules(app)
             else:
+                draft = await self.create_next_draft()
+                if draft is None:
+                    await app.bot.send_message(self.settings.telegram_owner_id, "Новых товаров для постинга нет.")
+                    return
                 await self.send_draft_to_owner(app, draft.id)
         except Exception:
             logger.exception("Scheduled post preparation failed")
             await app.bot.send_message(self.settings.telegram_owner_id, "Ошибка при подготовке поста. Подробности в логах.")
+
+    def _load_schedule_rules(self) -> dict[str, object]:
+        rules: dict[str, object] = {
+            "active_weekdays": [0, 1, 2, 3, 4, 5, 6],
+            "posts_per_day": 1,
+            "mode": "interval",
+            "exact_time": "12:00",
+            "start_time": "10:00",
+            "end_time": "22:00",
+            "lookahead_days": 7,
+        }
+        with self.session_factory() as session:
+            repo = Repository(session)
+            raw = repo.get_setting("schedule_rules", "")
+        if not raw:
+            return rules
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return rules
+        if not isinstance(parsed, dict):
+            return rules
+        weekdays: list[int] = []
+        for value in parsed.get("active_weekdays", []):
+            try:
+                weekday = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= weekday <= 6:
+                weekdays.append(weekday)
+        if weekdays:
+            rules["active_weekdays"] = sorted(set(weekdays))
+        try:
+            rules["posts_per_day"] = max(1, int(parsed.get("posts_per_day", 1)))
+        except (TypeError, ValueError):
+            pass
+        mode = str(parsed.get("mode", "interval")).strip()
+        if mode in {"exact", "interval"}:
+            rules["mode"] = mode
+        for key in ("exact_time", "start_time", "end_time"):
+            value = parsed.get(key)
+            if value:
+                rules[key] = str(value)[:5]
+        try:
+            rules["lookahead_days"] = max(1, min(60, int(parsed.get("lookahead_days", 7))))
+        except (TypeError, ValueError):
+            pass
+        return rules
+
+    def _parse_time_string(self, value: str | None, fallback: str) -> dt_time:
+        text = (value or fallback or "12:00").strip()
+        for fmt in ("%H:%M", "%H:%M:%S"):
+            try:
+                return datetime.strptime(text, fmt).time()
+            except ValueError:
+                continue
+        return datetime.strptime(fallback, "%H:%M").time()
+
+    def _minutes_to_time(self, minutes: int) -> dt_time:
+        minutes = max(0, min((23 * 60) + 59, minutes))
+        return datetime.strptime(f"{minutes // 60:02d}:{minutes % 60:02d}", "%H:%M").time()
+
+    def _build_day_slots(self, posts_per_day: int, mode: str, exact_time: str, start_time: str, end_time: str) -> list[dt_time]:
+        exact = self._parse_time_string(exact_time, "12:00")
+        start = self._parse_time_string(start_time, "10:00")
+        end = self._parse_time_string(end_time, "22:00")
+        if posts_per_day <= 1:
+            return [exact if mode == "exact" else start]
+        if mode == "exact":
+            base_minutes = exact.hour * 60 + exact.minute
+            return [self._minutes_to_time(min(base_minutes + (index * 5), 23 * 60 + 55)) for index in range(posts_per_day)]
+        start_minutes = start.hour * 60 + start.minute
+        end_minutes = end.hour * 60 + end.minute
+        if end_minutes <= start_minutes:
+            end_minutes = start_minutes + 60
+        step = (end_minutes - start_minutes) / (posts_per_day - 1)
+        return [self._minutes_to_time(int(round(start_minutes + (step * index)))) for index in range(posts_per_day)]
+
+    async def fill_schedule_from_rules(self, app: Application | None = None) -> dict[str, object]:
+        rules = self._load_schedule_rules()
+        active_weekdays = set(int(value) for value in rules.get("active_weekdays", []))
+        posts_per_day = max(1, int(rules.get("posts_per_day", 1)))
+        mode = str(rules.get("mode", "interval"))
+        exact_time = str(rules.get("exact_time", "12:00"))
+        start_time = str(rules.get("start_time", "10:00"))
+        end_time = str(rules.get("end_time", "22:00"))
+        lookahead_days = max(1, int(rules.get("lookahead_days", 7)))
+
+        if not active_weekdays:
+            return {"created": 0, "requested": 0, "items": [], "message": "No active weekdays configured."}
+
+        moscow = ZoneInfo("Europe/Moscow")
+        today = datetime.now(moscow).date()
+        slots = self._build_day_slots(posts_per_day, mode, exact_time, start_time, end_time)
+        created: list[dict[str, object]] = []
+
+        with self.session_factory() as session:
+            repo = Repository(session)
+            candidates = repo.list_products("new", limit=1000, offset=0)
+            scheduled_product_ids = repo.scheduled_product_ids()
+            pending_product_ids = {draft.product_id for draft in repo.list_drafts("pending", limit=1000, offset=0)}
+            ranked_candidates = [
+                product
+                for product in self._rank_products(candidates, repo)
+                if product.id not in scheduled_product_ids and product.id not in pending_product_ids
+            ]
+            scheduled_items = repo.list_scheduled_posts("all", limit=2000)
+
+        def scheduled_count_for_day(day_value: datetime.date) -> int:
+            count = 0
+            for item in scheduled_items:
+                if item.status not in {"scheduled", "published"}:
+                    continue
+                local_dt = item.scheduled_at.replace(tzinfo=timezone.utc).astimezone(moscow)
+                if local_dt.date() == day_value:
+                    count += 1
+            return count
+
+        candidate_index = 0
+        for day_offset in range(lookahead_days):
+            day_value = today + timedelta(days=day_offset)
+            if day_value.weekday() not in active_weekdays:
+                continue
+            current_count = scheduled_count_for_day(day_value)
+            while current_count < posts_per_day and candidate_index < len(ranked_candidates):
+                product = ranked_candidates[candidate_index]
+                candidate_index += 1
+                try:
+                    await self.ensure_premium_image(product.id)
+                except Exception:
+                    logger.exception("Premium image generation failed while filling schedule for product %s", product.id)
+                try:
+                    draft = await self.create_draft_for_product(product.id, force_new=True)
+                except TextGenerationError as exc:
+                    logger.warning("Text generation failed while filling schedule for product %s: %s", product.id, exc)
+                    continue
+                if draft is None:
+                    continue
+                slot = slots[min(current_count, len(slots) - 1)]
+                local_dt = datetime.combine(day_value, slot, tzinfo=moscow)
+                scheduled_dt = local_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                with self.session_factory() as session:
+                    repo = Repository(session)
+                    item = repo.create_scheduled_post(draft.id, scheduled_dt)
+                    repo.log_product_event(product.id, "auto_scheduled", value=mode, note=slot.strftime("%H:%M"))
+                scheduled_items.append(item)
+                created.append(scheduled_payload(item))
+                current_count += 1
+
+        result = {
+            "created": len(created),
+            "requested": lookahead_days * posts_per_day,
+            "items": created,
+            "mode": mode,
+            "lookahead_days": lookahead_days,
+        }
+        if app is not None and created:
+            await app.bot.send_message(
+                self.settings.telegram_owner_id,
+                f"Автоплан обновлён: создано {len(created)} слотов на {lookahead_days} дн.",
+            )
+        return result
+
+    async def ensure_premium_image(self, product_id: int) -> str | None:
+        with self.session_factory() as session:
+            repo = Repository(session)
+            product = repo.get_product(product_id)
+            if product is None:
+                return None
+            engine = repo.get_setting("image_engine", self.settings.image_engine)
+
+        if engine == "huggingface":
+            dynamic_settings = self.settings.model_copy(
+                update={
+                    "hf_image_model": self._get_str_setting("hf_image_model", self.settings.hf_image_model),
+                    "hf_image_provider": self._get_str_setting("hf_image_provider", self.settings.hf_image_provider),
+                    "hf_image_width": self._get_int_setting("hf_image_width", self.settings.hf_image_width),
+                    "hf_image_height": self._get_int_setting("hf_image_height", self.settings.hf_image_height),
+                    "image_generation_mode": self._get_str_setting("image_generation_mode", self.settings.image_generation_mode),
+                }
+            )
+            styler = HuggingFaceImageStyler(dynamic_settings)
+        elif engine == "local_sdcpp":
+            dynamic_settings = self.settings.model_copy(
+                update={
+                    "image_generation_mode": self._get_str_setting("image_generation_mode", self.settings.image_generation_mode),
+                    "local_sdcpp_bin": self._get_str_setting("local_sdcpp_bin", self.settings.local_sdcpp_bin),
+                    "local_image_model": self._get_str_setting("local_image_model", self.settings.local_image_model),
+                    "local_image_width": self._get_int_setting("local_image_width", self.settings.local_image_width),
+                    "local_image_height": self._get_int_setting("local_image_height", self.settings.local_image_height),
+                    "local_image_steps": self._get_int_setting("local_image_steps", self.settings.local_image_steps),
+                    "local_image_strength": float(self._get_str_setting("local_image_strength", str(self.settings.local_image_strength))),
+                    "local_image_cfg_scale": float(self._get_str_setting("local_image_cfg_scale", str(self.settings.local_image_cfg_scale))),
+                    "local_image_seed": self._get_int_setting("local_image_seed", self.settings.local_image_seed),
+                    "local_image_threads": self._get_int_setting("local_image_threads", self.settings.local_image_threads),
+                    "local_image_timeout_seconds": self._get_int_setting("local_image_timeout_seconds", self.settings.local_image_timeout_seconds),
+                }
+            )
+            styler = LocalSdcppImageStyler(dynamic_settings)
+        elif engine == "freetheai":
+            dynamic_settings = self.settings.model_copy(
+                update={
+                    "freetheai_api_key": self._get_str_setting("freetheai_api_key", self.settings.freetheai_api_key or ""),
+                    "freetheai_base_url": self._get_str_setting("freetheai_base_url", self.settings.freetheai_base_url),
+                    "freetheai_image_model": self._get_str_setting("freetheai_image_model", self.settings.freetheai_image_model),
+                    "freetheai_timeout_seconds": self._get_int_setting("freetheai_timeout_seconds", self.settings.freetheai_timeout_seconds),
+                }
+            )
+            styler = FreeTheAIImageStyler(dynamic_settings)
+        elif engine == "pollinations":
+            dynamic_settings = self.settings.model_copy(
+                update={
+                    "pollinations_api_key": self._get_str_setting("pollinations_api_key", self.settings.pollinations_api_key or ""),
+                    "pollinations_base_url": self._get_str_setting("pollinations_base_url", self.settings.pollinations_base_url),
+                    "pollinations_image_model": self._get_str_setting("pollinations_image_model", self.settings.pollinations_image_model),
+                    "pollinations_image_width": self._get_int_setting("pollinations_image_width", self.settings.pollinations_image_width),
+                    "pollinations_image_height": self._get_int_setting("pollinations_image_height", self.settings.pollinations_image_height),
+                    "pollinations_image_quality": self._get_str_setting("pollinations_image_quality", self.settings.pollinations_image_quality),
+                    "pollinations_image_timeout_seconds": self._get_int_setting(
+                        "pollinations_image_timeout_seconds",
+                        self.settings.pollinations_image_timeout_seconds,
+                    ),
+                    "image_generation_mode": self._get_str_setting("image_generation_mode", self.settings.image_generation_mode),
+                }
+            )
+            styler = PollinationsImageStyler(dynamic_settings)
+        elif engine == "cloudflare_worker":
+            dynamic_settings = self.settings.model_copy(
+                update={
+                    "cloudflare_worker_url": self._get_str_setting("cloudflare_worker_url", self.settings.cloudflare_worker_url or ""),
+                    "cloudflare_worker_api_key": self._get_str_setting("cloudflare_worker_api_key", self.settings.cloudflare_worker_api_key or ""),
+                    "cloudflare_worker_timeout_seconds": self._get_int_setting(
+                        "cloudflare_worker_timeout_seconds",
+                        self.settings.cloudflare_worker_timeout_seconds,
+                    ),
+                    "pollinations_image_width": self._get_int_setting("pollinations_image_width", self.settings.pollinations_image_width),
+                    "pollinations_image_height": self._get_int_setting("pollinations_image_height", self.settings.pollinations_image_height),
+                }
+            )
+            styler = CloudflareWorkerImageStyler(dynamic_settings)
+        elif engine == "codex_sale":
+            dynamic_settings = self.settings.model_copy(
+                update={
+                    "codex_sale_api_key": self._get_str_setting("codex_sale_api_key", self.settings.codex_sale_api_key or ""),
+                    "codex_sale_base_url": self._get_str_setting("codex_sale_base_url", self.settings.codex_sale_base_url),
+                    "codex_sale_image_model": self._get_str_setting("codex_sale_image_model", self.settings.codex_sale_image_model),
+                    "codex_sale_image_size": self._get_str_setting("codex_sale_image_size", self.settings.codex_sale_image_size),
+                    "codex_sale_timeout_seconds": self._get_int_setting("codex_sale_timeout_seconds", self.settings.codex_sale_timeout_seconds),
+                }
+            )
+            styler = CodexSaleImageStyler(dynamic_settings)
+        else:
+            return None
+
+        with self.session_factory() as session:
+            repo = Repository(session)
+            product = repo.get_product(product_id)
+            if product is None:
+                return None
+            try:
+                image_path = await styler.generate(product)
+            except ImageGenerationError as exc:
+                logger.warning("Premium image generation failed for product %s: %s", product_id, exc)
+                return None
+            repo.update_product_styled_image(product, image_path)
+            repo.log_product_event(product.id, "image_generated", value=engine, note=image_path)
+            return image_path
 
     def products_view(self, status: str = "new", page: int = 1) -> tuple[str, InlineKeyboardMarkup | None]:
         status = status if status in {"new", "active", "archive", "all", "published", "excluded"} else "new"
@@ -463,7 +740,7 @@ class PostService:
     async def process_scheduled_posts(self, app: Application) -> None:
         with self.session_factory() as session:
             repo = Repository(session)
-            due_items = repo.due_scheduled_posts(datetime.utcnow(), limit=5)
+            due_items = repo.due_scheduled_posts(datetime.utcnow(), limit=50)
             due = [(item.id, item.draft_id) for item in due_items]
 
         for scheduled_id, draft_id in due:
