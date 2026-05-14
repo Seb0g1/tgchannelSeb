@@ -1,20 +1,30 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ArrowRight, Sparkles } from 'lucide-vue-next'
+import { ArrowRight, RefreshCw, Sparkles } from 'lucide-vue-next'
 import { api, type Draft, type Product } from '../api'
 
 const loading = ref(true)
 const counts = ref<Record<string, number>>({})
 const products = ref<Product[]>([])
 const drafts = ref<Draft[]>([])
+const syncing = ref(false)
 
-onMounted(async () => {
+async function load() {
   const { data } = await api.get('/dashboard')
   counts.value = data.counts
   products.value = data.products
   drafts.value = data.drafts
   loading.value = false
-})
+}
+
+async function syncOzon() {
+  syncing.value = true
+  await api.post('/sync')
+  await load()
+  syncing.value = false
+}
+
+onMounted(load)
 </script>
 
 <template>
@@ -24,9 +34,14 @@ onMounted(async () => {
       <h1>Панель управления каналом</h1>
       <p class="muted">Каталог Ozon, AI-черновики, premium эмодзи и публикации.</p>
     </div>
-    <RouterLink class="button" to="/products">
-      Выбрать товар <ArrowRight :size="18" />
-    </RouterLink>
+    <div class="actions">
+      <button class="button secondary" :disabled="syncing" @click="syncOzon">
+        <RefreshCw :size="18" /> {{ syncing ? 'Синхронизация...' : 'Синхронизировать Ozon' }}
+      </button>
+      <RouterLink class="button" to="/products">
+        Выбрать товар <ArrowRight :size="18" />
+      </RouterLink>
+    </div>
   </section>
 
   <div v-if="loading" class="panel empty">Загружаю данные...</div>

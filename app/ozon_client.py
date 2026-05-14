@@ -98,21 +98,26 @@ class OzonClient:
         return await self._fetch_product_ids(limit)
 
     async def _fetch_details(self, product_ids: list[str]) -> list[dict[str, Any]]:
-        data = await self._post("/v3/product/info/list", {"product_id": product_ids[:1000]})
-        return data.get("items") or data.get("result", {}).get("items", [])
+        items: list[dict[str, Any]] = []
+        for chunk in self._chunks(product_ids, 1000):
+            data = await self._post("/v3/product/info/list", {"product_id": chunk})
+            items.extend(data.get("items") or data.get("result", {}).get("items", []))
+        return items
 
     async def _fetch_attributes(self, product_ids: list[str]) -> list[dict[str, Any]]:
         try:
-            data = await self._post(
-                "/v4/product/info/attributes",
-                {"filter": {"product_id": product_ids[:1000], "visibility": "ALL"}, "limit": len(product_ids)},
-            )
-            result = data.get("result", {})
-            if isinstance(result, dict):
-                return result.get("items") or []
-            if isinstance(result, list):
-                return result
-            return []
+            items: list[dict[str, Any]] = []
+            for chunk in self._chunks(product_ids, 1000):
+                data = await self._post(
+                    "/v4/product/info/attributes",
+                    {"filter": {"product_id": chunk, "visibility": "ALL"}, "limit": len(chunk)},
+                )
+                result = data.get("result", {})
+                if isinstance(result, dict):
+                    items.extend(result.get("items") or [])
+                elif isinstance(result, list):
+                    items.extend(result)
+            return items
         except httpx.HTTPError as exc:
             logger.warning("Ozon attributes endpoint failed: %s", exc)
             return []
@@ -131,24 +136,33 @@ class OzonClient:
         return descriptions
 
     async def _fetch_prices(self, product_ids: list[str]) -> list[dict[str, Any]]:
-        payload = {"filter": {"product_id": product_ids[:1000]}, "limit": len(product_ids)}
         for path in ("/v5/product/info/prices", "/v4/product/info/prices"):
-            try:
-                data = await self._post(path, payload)
-                result = data.get("result", {})
-                return result.get("items") or data.get("items") or []
-            except httpx.HTTPError as exc:
-                logger.warning("Ozon prices endpoint %s failed: %s", path, exc)
+            items: list[dict[str, Any]] = []
+            failed = False
+            for chunk in self._chunks(product_ids, 1000):
+                try:
+                    data = await self._post(path, {"filter": {"product_id": chunk}, "limit": len(chunk)})
+                    result = data.get("result", {})
+                    items.extend(result.get("items") or data.get("items") or [])
+                except httpx.HTTPError as exc:
+                    logger.warning("Ozon prices endpoint %s failed: %s", path, exc)
+                    failed = True
+                    break
+            if not failed:
+                return items
         return []
 
     async def _fetch_stocks(self, product_ids: list[str]) -> list[dict[str, Any]]:
         try:
-            data = await self._post(
-                "/v4/product/info/stocks",
-                {"filter": {"product_id": product_ids[:1000]}, "limit": len(product_ids)},
-            )
-            result = data.get("result", {})
-            return result.get("items") or data.get("items") or []
+            items: list[dict[str, Any]] = []
+            for chunk in self._chunks(product_ids, 1000):
+                data = await self._post(
+                    "/v4/product/info/stocks",
+                    {"filter": {"product_id": chunk}, "limit": len(chunk)},
+                )
+                result = data.get("result", {})
+                items.extend(result.get("items") or data.get("items") or [])
+            return items
         except httpx.HTTPError as exc:
             logger.warning("Ozon stocks endpoint failed: %s", exc)
             return []
@@ -244,3 +258,6 @@ class OzonClient:
         if stock is not None:
             return stock > 0
         return visibility in {"VISIBLE", "ALL", "IN_SALE", "ACTIVE"}
+
+    def _chunks(self, values: list[str], size: int) -> list[list[str]]:
+        return [values[index : index + size] for index in range(0, len(values), size)]

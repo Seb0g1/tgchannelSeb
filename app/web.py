@@ -34,6 +34,10 @@ class EmojiCreate(BaseModel):
     description: str | None = None
 
 
+class DraftUpdate(BaseModel):
+    text: str
+
+
 def require_admin(
     credentials: HTTPBasicCredentials = Depends(security),
     settings: Settings = Depends(get_settings),
@@ -134,6 +138,11 @@ def create_web_app() -> FastAPI:
             "drafts": [draft_payload(item) for item in drafts],
         }
 
+    @app.post("/api/sync")
+    async def sync_products(_: str = Depends(require_admin)):
+        count = await post_service.sync_products()
+        return {"count": count}
+
     @app.get("/api/products")
     async def products(
         q: str = "",
@@ -202,6 +211,39 @@ def create_web_app() -> FastAPI:
             "page": page,
             "limit": limit,
         }
+
+    @app.get("/api/drafts/{draft_id}")
+    async def draft_detail(draft_id: int, _: str = Depends(require_admin)):
+        with session_factory() as session:
+            repo = Repository(session)
+            draft = repo.get_draft(draft_id)
+            if draft is None:
+                raise HTTPException(status_code=404, detail="Draft not found")
+            product = repo.get_product(draft.product_id)
+        return {
+            "draft": draft_payload(draft),
+            "product": product_payload(product) if product else None,
+        }
+
+    @app.patch("/api/drafts/{draft_id}")
+    async def update_draft(draft_id: int, payload: DraftUpdate, _: str = Depends(require_admin)):
+        with session_factory() as session:
+            repo = Repository(session)
+            draft = repo.get_draft(draft_id)
+            if draft is None:
+                raise HTTPException(status_code=404, detail="Draft not found")
+            repo.update_draft_text(draft, payload.text)
+            return draft_payload(draft)
+
+    @app.post("/api/drafts/{draft_id}/reject")
+    async def reject_draft(draft_id: int, _: str = Depends(require_admin)):
+        with session_factory() as session:
+            repo = Repository(session)
+            draft = repo.get_draft(draft_id)
+            if draft is None:
+                raise HTTPException(status_code=404, detail="Draft not found")
+            repo.reject_draft(draft)
+            return draft_payload(draft)
 
     @app.get("/api/emojis")
     async def emojis(_: str = Depends(require_admin)):

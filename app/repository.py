@@ -29,7 +29,8 @@ class Repository:
         product.price = data.price
         product.stock = data.stock
         product.url = data.url
-        product.order_url = data.url
+        if not product.order_url:
+            product.order_url = data.url
         product.visibility = data.visibility
         product.is_active = data.is_active
         self.session.commit()
@@ -160,6 +161,14 @@ class Repository:
 
     def reject_draft(self, draft: Draft) -> None:
         draft.status = "rejected"
+        self.session.commit()
+
+    def update_draft_text(self, draft: Draft, text: str) -> None:
+        draft.text = text
+        self.session.commit()
+
+    def update_draft_status(self, draft: Draft, status: str) -> None:
+        draft.status = status
         self.session.commit()
 
     def exclude_product(self, product: Product, value: bool = True) -> None:
