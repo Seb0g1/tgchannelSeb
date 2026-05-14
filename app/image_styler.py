@@ -610,17 +610,17 @@ class PollinationsImageStyler:
         name = product.name or "perfume"
         if self._normalized_model() in self.REFERENCE_IMAGE_MODELS and self.settings.image_generation_mode == "image_to_image":
             return (
-                "Premium edit of this real product photo for Telegram channel Aromat Day. "
+                "Premium edit of this real product photo for a luxury fragrance Telegram channel. "
                 "Preserve the exact real bottle, packaging, label, colors and proportions. "
                 "Improve only lighting, background, reflections and premium boutique look. "
                 "Luxury cosmetic advertising, dark silk or glass background, warm gold accents, "
-                "clean realistic product photography, no text, no watermark, no extra products. "
+                "clean realistic product photography, absolutely no words, no typography, no watermark, no extra products. "
                 f"Product context: {brand} {name}."
             )
         return (
-            "Luxury premium perfume editorial image for Telegram channel Aromat Day, "
+            "Luxury premium perfume editorial image for a fragrance Telegram channel, "
             "elegant fragrance boutique mood, dark silk and glass background, warm gold light, "
-            "minimal clean cosmetic advertising composition, no text, no watermark. "
+            "minimal clean cosmetic advertising composition, absolutely no words, no typography, no watermark. "
             f"Product context: {brand} {name}."
         )
 
@@ -637,54 +637,59 @@ class PollinationsImageStyler:
 
         title_font = self._font(max(24, width // 30), bold=True)
         small_font = self._font(max(14, width // 58))
-        chip_font = self._font(max(13, width // 62), bold=True)
-
         pad = max(18, width // 34)
-        bar_h = max(96, height // 9)
+        bar_h = max(86, height // 11)
         y0 = height - bar_h
         draw.rectangle((0, y0, width, height), fill=dark)
         draw.line((0, y0, width, y0), fill=line, width=max(1, width // 650))
 
         mark_x = pad
-        mark_y = y0 + bar_h // 2 - 24
-        self._draw_bottle_mark(draw, mark_x, mark_y, gold)
-        draw.text((mark_x + 62, y0 + 22), "АРОМАТ ДНЯ", fill=gold, font=title_font)
-        draw.text((mark_x + 62, y0 + 58), "premium fragrance edit", fill=cream, font=small_font)
+        mark_y = y0 + max(12, bar_h // 7)
+        mark_size = max(44, min(62, width // 14))
+        self._draw_bottle_mark(draw, mark_x, mark_y, gold, mark_size)
 
-        chips = self._overlay_chips(product)
-        chip_x = pad
-        chip_y = pad
-        for label in chips:
-            text_box = draw.textbbox((0, 0), label, font=chip_font)
-            chip_w = text_box[2] - text_box[0] + 28
-            chip_h = text_box[3] - text_box[1] + 16
-            draw.rounded_rectangle(
-                (chip_x, chip_y, chip_x + chip_w, chip_y + chip_h),
-                radius=chip_h // 2,
-                fill=(8, 10, 16, 178),
-                outline=(224, 191, 112, 150),
-                width=max(1, width // 900),
-            )
-            draw.text((chip_x + 14, chip_y + 7), label, fill=cream, font=chip_font)
-            chip_y += chip_h + 8
+        text_x = mark_x + mark_size + max(18, width // 54)
+        title_y = y0 + max(20, bar_h // 4)
+        subtitle_y = min(y0 + bar_h - 28, title_y + max(28, width // 30))
+        draw.text((text_x, title_y), "АРОМАТ ДНЯ", fill=gold, font=title_font)
+        draw.text((text_x, subtitle_y), "premium fragrance edit", fill=cream, font=small_font)
 
         image = Image.alpha_composite(image, overlay).convert("RGB")
         output = BytesIO()
         image.save(output, format="PNG", optimize=True)
         return output.getvalue()
 
-    def _draw_bottle_mark(self, draw: ImageDraw.ImageDraw, x: int, y: int, color: tuple[int, int, int, int]) -> None:
-        cx = x + 24
-        cy = y + 4
+    def _draw_bottle_mark(
+        self,
+        draw: ImageDraw.ImageDraw,
+        x: int,
+        y: int,
+        color: tuple[int, int, int, int],
+        size: int,
+    ) -> None:
+        scale = size / 74
+        cx = x + int(32 * scale)
+        cy = y + int(14 * scale)
         for idx in range(21):
             angle = math.radians(205 + idx * 6.5)
-            x2 = cx + int(math.cos(angle) * 54)
-            y2 = cy + int(math.sin(angle) * 54)
+            x2 = cx + int(math.cos(angle) * 42 * scale)
+            y2 = cy + int(math.sin(angle) * 42 * scale)
             draw.line((cx, cy, x2, y2), fill=(color[0], color[1], color[2], 120), width=1)
-        draw.rounded_rectangle((x + 10, y + 24, x + 54, y + 74), radius=7, outline=color, width=3)
-        draw.rounded_rectangle((x + 18, y + 6, x + 46, y + 28), radius=6, outline=color, width=3)
-        draw.line((x + 18, y + 28, x + 18, y + 38), fill=color, width=3)
-        draw.line((x + 46, y + 28, x + 46, y + 38), fill=color, width=3)
+        stroke = max(2, int(3 * scale))
+        draw.rounded_rectangle(
+            (x + int(18 * scale), y + int(34 * scale), x + int(56 * scale), y + int(72 * scale)),
+            radius=max(4, int(6 * scale)),
+            outline=color,
+            width=stroke,
+        )
+        draw.rounded_rectangle(
+            (x + int(24 * scale), y + int(17 * scale), x + int(50 * scale), y + int(35 * scale)),
+            radius=max(4, int(5 * scale)),
+            outline=color,
+            width=stroke,
+        )
+        draw.line((x + int(24 * scale), y + int(35 * scale), x + int(24 * scale), y + int(44 * scale)), fill=color, width=stroke)
+        draw.line((x + int(50 * scale), y + int(35 * scale), x + int(50 * scale), y + int(44 * scale)), fill=color, width=stroke)
 
     def _overlay_chips(self, product: Product) -> list[str]:
         text = " ".join(
