@@ -57,6 +57,7 @@ class AppSettingsPayload(BaseModel):
     ollama_model: str
     ollama_timeout_seconds: int
     ollama_num_predict: int
+    text_engine: str = "ollama"
     image_engine: str = "none"
     comfyui_base_url: str = "http://127.0.0.1:8188"
     hf_image_model: str = "stabilityai/stable-diffusion-xl-refiner-1.0"
@@ -78,6 +79,9 @@ class AppSettingsPayload(BaseModel):
     freetheai_base_url: str = "https://api.freetheai.xyz/v1"
     freetheai_image_model: str = "img/gpt-image-2"
     freetheai_timeout_seconds: int = 180
+    freetheai_text_model: str = "bbl/gpt-4.1"
+    freetheai_text_timeout_seconds: int = 180
+    freetheai_text_max_tokens: int = 900
 
 
 class ScheduleCreate(BaseModel):
@@ -238,6 +242,7 @@ def create_web_app() -> FastAPI:
             "ollama_model": db.get("ollama_model", settings.ollama_model),
             "ollama_timeout_seconds": int(db.get("ollama_timeout_seconds", settings.ollama_timeout_seconds)),
             "ollama_num_predict": int(db.get("ollama_num_predict", settings.ollama_num_predict)),
+            "text_engine": db.get("text_engine", settings.text_engine),
             "image_engine": db.get("image_engine", settings.image_engine),
             "comfyui_base_url": db.get("comfyui_base_url", settings.comfyui_base_url),
             "hf_image_model": db.get("hf_image_model", settings.hf_image_model),
@@ -259,6 +264,11 @@ def create_web_app() -> FastAPI:
             "freetheai_base_url": db.get("freetheai_base_url", settings.freetheai_base_url),
             "freetheai_image_model": db.get("freetheai_image_model", settings.freetheai_image_model),
             "freetheai_timeout_seconds": int(db.get("freetheai_timeout_seconds", settings.freetheai_timeout_seconds)),
+            "freetheai_text_model": db.get("freetheai_text_model", settings.freetheai_text_model),
+            "freetheai_text_timeout_seconds": int(
+                db.get("freetheai_text_timeout_seconds", settings.freetheai_text_timeout_seconds)
+            ),
+            "freetheai_text_max_tokens": int(db.get("freetheai_text_max_tokens", settings.freetheai_text_max_tokens)),
         }
 
     @app.patch("/api/settings")

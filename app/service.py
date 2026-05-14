@@ -16,7 +16,7 @@ from telegram.error import BadRequest, TelegramError
 from telegram.ext import Application
 
 from app.config import Settings
-from app.llm import OllamaGenerator
+from app.llm import FreeTheAITextGenerator, OllamaGenerator, TextGenerationError
 from app.models import Draft, Product
 from app.ozon_client import OzonClient
 from app.repository import Repository
@@ -69,9 +69,7 @@ class PostService:
             product_data = repo.product_to_data(product)
 
         style = self._get_str_setting("post_style", self.settings.post_style)
-        model = self._get_str_setting("ollama_model", self.settings.ollama_model)
-        self.generator.model = model
-        text = await self.generator.generate_post(product_data, style)
+        text = await self._generate_post(product_data, style)
 
         with self.session_factory() as session:
             repo = Repository(session)
@@ -314,9 +312,7 @@ class PostService:
             repo.reject_draft(old_draft)
 
         style = self._get_str_setting("post_style", self.settings.post_style)
-        model = self._get_str_setting("ollama_model", self.settings.ollama_model)
-        self.generator.model = model
-        text = await self.generator.generate_post(product_data, style)
+        text = await self._generate_post(product_data, style)
         with self.session_factory() as session:
             repo = Repository(session)
             product = repo.get_product(product_id)
@@ -355,6 +351,30 @@ class PostService:
             draft.text = text
             session.commit()
             return True
+
+    async def _generate_post(self, product_data, style: str) -> str:
+        engine = self._get_str_setting("text_engine", self.settings.text_engine)
+        if engine == "freetheai":
+            generator = FreeTheAITextGenerator(
+                api_key=self._get_str_setting("freetheai_api_key", self.settings.freetheai_api_key or ""),
+                base_url=self._get_str_setting("freetheai_base_url", self.settings.freetheai_base_url),
+                model=self._get_str_setting("freetheai_text_model", self.settings.freetheai_text_model),
+                timeout_seconds=self._get_int_setting(
+                    "freetheai_text_timeout_seconds",
+                    self.settings.freetheai_text_timeout_seconds,
+                ),
+                max_tokens=self._get_int_setting("freetheai_text_max_tokens", self.settings.freetheai_text_max_tokens),
+            )
+            try:
+                return await generator.generate_post(product_data, style)
+            except TextGenerationError:
+                raise
+
+        model = self._get_str_setting("ollama_model", self.settings.ollama_model)
+        self.generator.model = model
+        self.generator.timeout_seconds = self._get_int_setting("ollama_timeout_seconds", self.settings.ollama_timeout_seconds)
+        self.generator.num_predict = self._get_int_setting("ollama_num_predict", self.settings.ollama_num_predict)
+        return await self.generator.generate_post(product_data, style)
 
     def _get_str_setting(self, key: str, default: str) -> str:
         with self.session_factory() as session:

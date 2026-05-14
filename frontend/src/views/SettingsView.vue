@@ -11,9 +11,15 @@ const form = ref({
   post_style: 'premium',
   max_products_per_sync: 100,
   post_interval_minutes: 360,
+  text_engine: 'ollama',
   ollama_model: 'qwen2.5:7b',
   ollama_timeout_seconds: 300,
   ollama_num_predict: 650,
+  freetheai_api_key: '',
+  freetheai_base_url: 'https://api.freetheai.xyz/v1',
+  freetheai_text_model: 'bbl/gpt-4.1',
+  freetheai_text_timeout_seconds: 180,
+  freetheai_text_max_tokens: 900,
   image_engine: 'none',
   comfyui_base_url: 'http://127.0.0.1:8188',
   hf_image_model: 'stabilityai/stable-diffusion-xl-refiner-1.0',
@@ -31,8 +37,6 @@ const form = ref({
   local_image_seed: -1,
   local_image_threads: 4,
   local_image_timeout_seconds: 1800,
-  freetheai_api_key: '',
-  freetheai_base_url: 'https://api.freetheai.xyz/v1',
   freetheai_image_model: 'img/gpt-image-2',
   freetheai_timeout_seconds: 180,
 })
@@ -87,15 +91,47 @@ onMounted(load)
       <label class="label">Интервал автопостинга, минут
         <input v-model.number="form.post_interval_minutes" class="input" type="number" min="1" />
       </label>
-      <label class="label">Модель Ollama
-        <input v-model="form.ollama_model" class="input" />
-      </label>
-      <label class="label">Таймаут Ollama, секунд
-        <input v-model.number="form.ollama_timeout_seconds" class="input" type="number" min="30" />
-      </label>
-      <label class="label">Длина ответа модели
-        <input v-model.number="form.ollama_num_predict" class="input" type="number" min="100" />
-      </label>
+    </div>
+
+    <div class="panel">
+      <div class="block-head">
+        <div>
+          <div class="eyebrow">text generation</div>
+          <h2><Sparkles :size="20" /> Тексты постов</h2>
+        </div>
+      </div>
+      <div class="form-grid">
+        <label class="label">Генератор текста
+          <select v-model="form.text_engine" class="select">
+            <option value="ollama">ollama</option>
+            <option value="freetheai">freetheai</option>
+          </select>
+        </label>
+        <label class="label">Модель Ollama
+          <input v-model="form.ollama_model" class="input" />
+        </label>
+        <label class="label">Таймаут Ollama, секунд
+          <input v-model.number="form.ollama_timeout_seconds" class="input" type="number" min="30" />
+        </label>
+        <label class="label">Длина ответа Ollama
+          <input v-model.number="form.ollama_num_predict" class="input" type="number" min="100" />
+        </label>
+        <label class="label">FreeTheAI API key
+          <input v-model="form.freetheai_api_key" class="input" type="password" autocomplete="off" />
+        </label>
+        <label class="label">FreeTheAI base URL
+          <input v-model="form.freetheai_base_url" class="input" />
+        </label>
+        <label class="label">FreeTheAI text model
+          <input v-model="form.freetheai_text_model" class="input" />
+        </label>
+        <label class="label">FreeTheAI text timeout, seconds
+          <input v-model.number="form.freetheai_text_timeout_seconds" class="input" type="number" min="30" />
+        </label>
+        <label class="label">FreeTheAI max tokens
+          <input v-model.number="form.freetheai_text_max_tokens" class="input" type="number" min="200" />
+        </label>
+      </div>
     </div>
 
     <div class="panel">
@@ -121,32 +157,26 @@ onMounted(load)
             <option value="cover">cover</option>
           </select>
         </label>
+        <label class="label">FreeTheAI image edit model
+          <input v-model="form.freetheai_image_model" class="input" />
+        </label>
+        <label class="label">FreeTheAI image timeout, seconds
+          <input v-model.number="form.freetheai_timeout_seconds" class="input" type="number" min="30" />
+        </label>
         <label class="label">Hugging Face model
           <input v-model="form.hf_image_model" class="input" />
         </label>
         <label class="label">HF provider
           <input v-model="form.hf_image_provider" class="input" placeholder="auto" />
         </label>
-        <label class="label">Ширина
+        <label class="label">Ширина HF
           <input v-model.number="form.hf_image_width" class="input" type="number" min="256" step="64" />
         </label>
-        <label class="label">Высота
+        <label class="label">Высота HF
           <input v-model.number="form.hf_image_height" class="input" type="number" min="256" step="64" />
         </label>
         <label class="label">ComfyUI URL
           <input v-model="form.comfyui_base_url" class="input" />
-        </label>
-        <label class="label">FreeTheAI API key
-          <input v-model="form.freetheai_api_key" class="input" type="password" autocomplete="off" />
-        </label>
-        <label class="label">FreeTheAI base URL
-          <input v-model="form.freetheai_base_url" class="input" />
-        </label>
-        <label class="label">FreeTheAI image edit model
-          <input v-model="form.freetheai_image_model" class="input" />
-        </label>
-        <label class="label">FreeTheAI timeout, seconds
-          <input v-model.number="form.freetheai_timeout_seconds" class="input" type="number" min="30" />
         </label>
         <label class="label">stable-diffusion.cpp binary
           <input v-model="form.local_sdcpp_bin" class="input" />

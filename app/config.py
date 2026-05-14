@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     ollama_model: str = Field("qwen2.5:7b", alias="OLLAMA_MODEL")
     ollama_timeout_seconds: int = Field(300, alias="OLLAMA_TIMEOUT_SECONDS")
     ollama_num_predict: int = Field(650, alias="OLLAMA_NUM_PREDICT")
+    text_engine: str = Field("ollama", alias="TEXT_ENGINE")
 
     database_url: str = Field("sqlite:///data/bot.sqlite3", alias="DATABASE_URL")
     app_mode: Literal["manual", "auto"] = Field("manual", alias="APP_MODE")
@@ -60,6 +61,9 @@ class Settings(BaseSettings):
     freetheai_base_url: str = Field("https://api.freetheai.xyz/v1", alias="FREETHEAI_BASE_URL")
     freetheai_image_model: str = Field("img/gpt-image-2", alias="FREETHEAI_IMAGE_MODEL")
     freetheai_timeout_seconds: int = Field(180, alias="FREETHEAI_TIMEOUT_SECONDS")
+    freetheai_text_model: str = Field("bbl/gpt-4.1", alias="FREETHEAI_TEXT_MODEL")
+    freetheai_text_timeout_seconds: int = Field(180, alias="FREETHEAI_TEXT_TIMEOUT_SECONDS")
+    freetheai_text_max_tokens: int = Field(900, alias="FREETHEAI_TEXT_MAX_TOKENS")
 
 
 @lru_cache
