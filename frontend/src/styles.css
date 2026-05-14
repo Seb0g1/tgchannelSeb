@@ -138,6 +138,77 @@ tbody tr:hover td { background: rgba(255, 255, 255, .025); }
   color: #e9e2d8;
 }
 .empty { padding: 28px; text-align: center; color: var(--muted); }
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 12px;
+}
+.calendar-day {
+  min-height: 240px;
+  padding: 14px;
+}
+.calendar-day header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.calendar-day header span {
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 800;
+}
+.calendar-day header strong {
+  font-size: 15px;
+}
+.calendar-empty {
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  min-height: 78px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+}
+.schedule-card {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(223, 191, 120, .28);
+  background: rgba(223, 191, 120, .08);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.schedule-card b,
+.schedule-card span {
+  display: block;
+}
+.schedule-card span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.icon-button {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(15, 17, 23, .8);
+  color: var(--muted);
+  cursor: pointer;
+}
+.icon-button:hover {
+  color: var(--red);
+}
 .login-page {
   min-height: 100vh;
   display: grid;
@@ -165,5 +236,7 @@ button:disabled {
   .sidebar { position: static; height: auto; }
   .side-note { position: static; margin-top: 18px; }
   .grid, .two { grid-template-columns: 1fr; }
+  .calendar-grid { grid-template-columns: 1fr; }
+  .calendar-day { min-height: auto; }
   .content { padding: 18px; }
 }
