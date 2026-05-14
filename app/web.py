@@ -59,11 +59,11 @@ class AppSettingsPayload(BaseModel):
     ollama_num_predict: int
     image_engine: str = "none"
     comfyui_base_url: str = "http://127.0.0.1:8188"
-    hf_image_model: str = "stabilityai/stable-diffusion-xl-base-1.0"
+    hf_image_model: str = "stabilityai/stable-diffusion-xl-refiner-1.0"
     hf_image_provider: str = "auto"
     hf_image_width: int = 1024
     hf_image_height: int = 1280
-    image_generation_mode: str = "cover"
+    image_generation_mode: str = "image_to_image"
 
 
 class ScheduleCreate(BaseModel):

@@ -16,11 +16,11 @@ const form = ref({
   ollama_num_predict: 650,
   image_engine: 'none',
   comfyui_base_url: 'http://127.0.0.1:8188',
-  hf_image_model: 'stabilityai/stable-diffusion-xl-base-1.0',
+  hf_image_model: 'stabilityai/stable-diffusion-xl-refiner-1.0',
   hf_image_provider: 'auto',
   hf_image_width: 1024,
   hf_image_height: 1280,
-  image_generation_mode: 'cover',
+  image_generation_mode: 'image_to_image',
 })
 
 async function load() {
@@ -101,8 +101,8 @@ onMounted(load)
         </label>
         <label class="label">Режим
           <select v-model="form.image_generation_mode" class="select">
+            <option value="image_to_image">image_to_image</option>
             <option value="cover">cover</option>
-            <option value="product">product</option>
           </select>
         </label>
         <label class="label">Hugging Face model
