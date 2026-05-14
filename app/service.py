@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+from io import BytesIO
 from collections.abc import Callable
 
+import httpx
 from sqlalchemy.orm import Session
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import Application
 
 from app.config import Settings
@@ -201,12 +204,16 @@ class PostService:
         )
         if images:
             caption, tail = self._split_caption(text)
-            await app.bot.send_photo(
-                chat_id=self.settings.telegram_owner_id,
-                photo=images[0],
-                caption=caption,
-                reply_markup=keyboard,
+            sent = await self._send_photo_safely(
+                app,
+                self.settings.telegram_owner_id,
+                images[0],
+                caption,
+                keyboard,
             )
+            if not sent:
+                await self._send_long_text(app, self.settings.telegram_owner_id, text, keyboard)
+                return
             if tail:
                 await self._send_long_text(app, self.settings.telegram_owner_id, tail, keyboard)
         else:
@@ -229,12 +236,23 @@ class PostService:
         elif len(images) > 1 and self.settings.max_photos_per_post > 1:
             caption, tail = self._split_caption(text)
             media = [InputMediaPhoto(media=url, caption=caption if index == 0 else None) for index, url in enumerate(images)]
-            await app.bot.send_media_group(self.settings.telegram_channel_id, media[: self.settings.max_photos_per_post])
-            await self._send_long_text(app, self.settings.telegram_channel_id, tail)
+            try:
+                await app.bot.send_media_group(self.settings.telegram_channel_id, media[: self.settings.max_photos_per_post])
+                await self._send_long_text(app, self.settings.telegram_channel_id, tail)
+            except BadRequest as exc:
+                logger.warning("Telegram could not fetch media group URLs, falling back to first image upload: %s", exc)
+                sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption)
+                if sent:
+                    await self._send_long_text(app, self.settings.telegram_channel_id, tail)
+                else:
+                    await self._send_long_text(app, self.settings.telegram_channel_id, text)
         elif images:
             caption, tail = self._split_caption(text)
-            await app.bot.send_photo(self.settings.telegram_channel_id, photo=images[0], caption=caption)
-            await self._send_long_text(app, self.settings.telegram_channel_id, tail)
+            sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption)
+            if sent:
+                await self._send_long_text(app, self.settings.telegram_channel_id, tail)
+            else:
+                await self._send_long_text(app, self.settings.telegram_channel_id, text)
         else:
             await self._send_long_text(app, self.settings.telegram_channel_id, text)
 
@@ -300,7 +318,7 @@ class PostService:
             return True
 
     def _product_images(self, product: Product) -> list[str]:
-        return [url for url in self._load_json_list(product.images_json) if isinstance(url, str)]
+        return [url for url in self._load_json_list(product.images_json) if isinstance(url, str) and url.startswith("http")]
 
     def _draft_preview(self, draft: Draft, product: Product) -> str:
         return (
@@ -336,6 +354,52 @@ class PostService:
             await app.bot.send_message(chat_id, chunk.strip(), reply_markup=reply_markup if first else None)
             first = False
             text = text[len(chunk) :].strip()
+
+    async def _send_photo_safely(
+        self,
+        app: Application,
+        chat_id: int | str,
+        photo_url: str,
+        caption: str,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> bool:
+        try:
+            await app.bot.send_photo(chat_id=chat_id, photo=photo_url, caption=caption, reply_markup=reply_markup)
+            return True
+        except BadRequest as exc:
+            logger.warning("Telegram could not fetch photo URL, trying manual upload: %s", exc)
+
+        image = await self._download_image(photo_url)
+        if image is None:
+            return False
+
+        try:
+            await app.bot.send_photo(chat_id=chat_id, photo=image, caption=caption, reply_markup=reply_markup)
+            return True
+        except TelegramError as exc:
+            logger.warning("Telegram photo upload fallback failed: %s", exc)
+            return False
+
+    async def _download_image(self, url: str) -> BytesIO | None:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; tgchannelSeb/1.0)",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10), follow_redirects=True, headers=headers) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "")
+                if "image" not in content_type:
+                    logger.warning("URL did not return an image: %s (%s)", url, content_type)
+                    return None
+                image = BytesIO(response.content)
+                image.name = "product.jpg"
+                image.seek(0)
+                return image
+        except httpx.HTTPError as exc:
+            logger.warning("Could not download product image %s: %s", url, exc)
+            return None
 
     def _product_state(self, product: Product) -> str:
         if product.is_excluded:
