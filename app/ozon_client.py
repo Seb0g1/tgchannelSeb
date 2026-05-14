@@ -11,8 +11,9 @@ logger = logging.getLogger(__name__)
 
 
 class OzonClient:
-    def __init__(self, client_id: str, api_key: str, base_url: str) -> None:
+    def __init__(self, client_id: str, api_key: str, base_url: str, visibility: str = "VISIBLE") -> None:
         self.base_url = base_url.rstrip("/")
+        self.visibility = visibility
         self.headers = {
             "Client-Id": client_id,
             "Api-Key": api_key,
@@ -65,6 +66,8 @@ class OzonClient:
                     price=self._extract_price(price_item, item),
                     stock=self._extract_stock(stock_item, item),
                     url=self._extract_url(item),
+                    visibility=str(item.get("visibility") or self.visibility),
+                    is_active=self._is_active(item, stock_item),
                 )
             )
         return products
@@ -74,7 +77,7 @@ class OzonClient:
         last_id = ""
         while len(items) < limit:
             payload = {
-                "filter": {"visibility": "ALL"},
+                "filter": {"visibility": self.visibility},
                 "last_id": last_id,
                 "limit": min(100, limit - len(items)),
             }
@@ -90,6 +93,9 @@ class OzonClient:
         ids = [str(item.get("product_id")) for item in items if item.get("product_id")]
         logger.info("Fetched %s Ozon product ids", len(ids))
         return ids[:limit]
+
+    async def fetch_all_product_ids(self, limit: int = 30000) -> list[str]:
+        return await self._fetch_product_ids(limit)
 
     async def _fetch_details(self, product_ids: list[str]) -> list[dict[str, Any]]:
         data = await self._post("/v3/product/info/list", {"product_id": product_ids[:1000]})
@@ -229,3 +235,12 @@ class OzonClient:
         if sku:
             return f"https://www.ozon.ru/product/{sku}/"
         return None
+
+    def _is_active(self, item: dict[str, Any], stock_item: dict[str, Any]) -> bool:
+        visibility = str(item.get("visibility") or self.visibility).upper()
+        if visibility in {"ARCHIVED", "DISABLED", "INVISIBLE", "DELETED"}:
+            return False
+        stock = self._extract_stock(stock_item, item)
+        if stock is not None:
+            return stock > 0
+        return visibility in {"VISIBLE", "ALL", "IN_SALE", "ACTIVE"}

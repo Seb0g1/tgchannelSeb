@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="top">
+  <div>
+    <h1>Premium эмодзи</h1>
+    <div class="muted">Справочник обычных и кастомных Telegram эмодзи</div>
+  </div>
+</div>
+
+<div class="two">
+  <form class="panel" method="post" action="/emojis">
+    <h2>Добавить эмодзи</h2>
+    <label>Название</label>
+    <input name="label" placeholder="Например: премиальное сияние" required>
+    <label>Обычный эмодзи</label>
+    <input name="emoji" placeholder="✨" required>
+    <label>Telegram custom emoji ID</label>
+    <input name="telegram_custom_emoji_id" placeholder="5368324170671202286">
+    <label>Описание</label>
+    <textarea name="description" placeholder="Где использовать и какой обычный эмодзи заменяет"></textarea>
+    <button type="submit">Сохранить</button>
+  </form>
+
+  <section class="table">
+    <table>
+      <thead><tr><th>Эмодзи</th><th>Название</th><th>ID</th><th></th></tr></thead>
+      <tbody>
+        {% for item in emojis %}
+        <tr>
+          <td style="font-size:26px">{{ item.emoji }}</td>
+          <td>{{ item.label }}<div class="muted">{{ item.description or "" }}</div></td>
+          <td><code>{{ item.telegram_custom_emoji_id or "-" }}</code></td>
+          <td>
+            <form method="post" action="/emojis/{{ item.id }}/delete"><button class="danger" type="submit">Удалить</button></form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

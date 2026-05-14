@@ -14,3 +14,5 @@ class ProductData(BaseModel):
     price: str | None = None
     stock: int | None = None
     url: str | None = None
+    visibility: str | None = None
+    is_active: bool = True

@@ -19,7 +19,12 @@ def build_app() -> tuple[Application, AsyncIOScheduler]:
     setup_logging(settings.log_level)
 
     session_factory = make_session_factory(settings.database_url)
-    ozon = OzonClient(settings.ozon_client_id, settings.ozon_api_key, settings.ozon_base_url)
+    ozon = OzonClient(
+        settings.ozon_client_id,
+        settings.ozon_api_key,
+        settings.ozon_base_url,
+        visibility=settings.ozon_visibility,
+    )
     generator = OllamaGenerator(
         settings.ollama_base_url,
         settings.ollama_model,

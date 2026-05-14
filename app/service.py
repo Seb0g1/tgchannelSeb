@@ -88,7 +88,7 @@ class PostService:
             await app.bot.send_message(self.settings.telegram_owner_id, "Ошибка при подготовке поста. Подробности в логах.")
 
     def products_view(self, status: str = "new", page: int = 1) -> tuple[str, InlineKeyboardMarkup | None]:
-        status = status if status in {"new", "all", "published", "excluded"} else "new"
+        status = status if status in {"new", "active", "archive", "all", "published", "excluded"} else "new"
         page = max(1, page)
         offset = (page - 1) * PAGE_SIZE
         with self.session_factory() as session:
@@ -137,7 +137,7 @@ class PostService:
                 f"Категория: {product.category or '-'}\n"
                 f"Цена: {product.price or '-'}\n"
                 f"Остаток: {product.stock if product.stock is not None else '-'}\n"
-                f"Ссылка: {product.url or '-'}\n\n"
+                f"Ссылка заказа: {product.order_url or product.url or '-'}\n\n"
                 f"Характеристики:\n{attrs_preview}"
             )
             keyboard = [

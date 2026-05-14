@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     max_photos_per_post: int = Field(1, alias="MAX_PHOTOS_PER_POST")
     dry_run: bool = Field(False, alias="DRY_RUN")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
+    web_admin_username: str = Field("admin", alias="WEB_ADMIN_USERNAME")
+    web_admin_password: str = Field("change_me", alias="WEB_ADMIN_PASSWORD")
+    web_host: str = Field("0.0.0.0", alias="WEB_HOST")
+    web_port: int = Field(8080, alias="WEB_PORT")
+    ozon_visibility: str = Field("VISIBLE", alias="OZON_VISIBILITY")
 
 
 @lru_cache
