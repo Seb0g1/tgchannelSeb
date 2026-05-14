@@ -820,3 +820,97 @@ class CloudflareWorkerImageStyler(PollinationsImageStyler):
         image_bytes = self._apply_aromat_day_overlay(image_bytes, product)
         output_path.write_bytes(image_bytes)
         return str(output_path)
+
+
+class CodexSaleImageStyler(PollinationsImageStyler):
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(settings)
+
+    async def generate(self, product: Product) -> str:
+        if not self.settings.codex_sale_api_key:
+            raise ImageGenerationError("CODEX_SALE_API_KEY is empty. Add Codex Sale API key to .env or settings.")
+
+        output_path = self.output_dir / f"product_{product.id}.png"
+        source_url = self._source_image_url(product)
+        headers = {"Authorization": f"Bearer {self.settings.codex_sale_api_key}"}
+
+        async with httpx.AsyncClient(timeout=self.settings.codex_sale_timeout_seconds, follow_redirects=True) as client:
+            if source_url:
+                source_response = await client.get(
+                    source_url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (compatible; aromat-day/1.0)",
+                        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                    },
+                )
+                source_response.raise_for_status()
+                image_bytes = await self._request_edit(client, headers, source_response.content, product)
+            else:
+                image_bytes = await self._request_generation(client, headers, product)
+
+        image_bytes = self._apply_aromat_day_overlay(image_bytes, product)
+        output_path.write_bytes(image_bytes)
+        return str(output_path)
+
+    async def _request_edit(
+        self,
+        client: httpx.AsyncClient,
+        headers: dict[str, str],
+        source_bytes: bytes,
+        product: Product,
+    ) -> bytes:
+        files = {"image": ("input.png", source_bytes, "image/png")}
+        data = {
+            "model": self.settings.codex_sale_image_model,
+            "prompt": self._build_edit_prompt(product),
+            "size": self.settings.codex_sale_image_size,
+            "response_format": "b64_json",
+        }
+        response = await client.post(
+            f"{self.settings.codex_sale_base_url.rstrip('/')}/images/edits",
+            headers=headers,
+            data=data,
+            files=files,
+        )
+        if response.status_code >= 400:
+            detail = response.text[-1600:]
+            raise ImageGenerationError(f"Codex Sale image edit returned HTTP {response.status_code}: {detail}")
+        return self._extract_openai_image_bytes(response.json())
+
+    async def _request_generation(self, client: httpx.AsyncClient, headers: dict[str, str], product: Product) -> bytes:
+        payload = {
+            "model": self.settings.codex_sale_image_model,
+            "prompt": self._build_prompt(product),
+            "size": self.settings.codex_sale_image_size,
+            "response_format": "b64_json",
+        }
+        response = await client.post(
+            f"{self.settings.codex_sale_base_url.rstrip('/')}/images/generations",
+            headers={**headers, "Content-Type": "application/json"},
+            json=payload,
+        )
+        if response.status_code >= 400:
+            detail = response.text[-1600:]
+            raise ImageGenerationError(f"Codex Sale image generation returned HTTP {response.status_code}: {detail}")
+        return self._extract_openai_image_bytes(response.json())
+
+    def _extract_openai_image_bytes(self, result: dict) -> bytes:
+        item = (result.get("data") or [{}])[0]
+        if item.get("b64_json"):
+            return base64.b64decode(item["b64_json"])
+        if item.get("url"):
+            raise ImageGenerationError("Codex Sale returned image URL instead of b64_json; set response_format=b64_json.")
+        raise ImageGenerationError(f"No image found in Codex Sale response: {result}")
+
+    def _build_edit_prompt(self, product: Product) -> str:
+        brand = product.brand or "premium fragrance"
+        name = product.name or "perfume"
+        return (
+            "Premium edit of this real product photo for a luxury fragrance Telegram channel. "
+            "Keep the exact product identity unchanged: same bottle, packaging, label, colors, cap and proportions. "
+            "Do not replace the product and do not invent another item. Improve only lighting, background, reflections, "
+            "contrast and premium boutique atmosphere. Dark silk or glass background, warm gold accents, clean realistic "
+            "cosmetic advertising, vertical social media composition. Absolutely no words, no typography, no watermark, "
+            "no extra logo and no extra products. "
+            f"Product context: {brand} {name}."
+        )

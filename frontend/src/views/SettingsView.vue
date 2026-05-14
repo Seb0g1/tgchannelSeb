@@ -57,6 +57,11 @@ const form = ref({
   cloudflare_worker_url: '',
   cloudflare_worker_api_key: '',
   cloudflare_worker_timeout_seconds: 180,
+  codex_sale_api_key: '',
+  codex_sale_base_url: 'https://codex.sale/v1',
+  codex_sale_image_model: 'gpt-image-2',
+  codex_sale_image_size: '1024x1024',
+  codex_sale_timeout_seconds: 300,
 })
 
 async function load() {
@@ -167,10 +172,32 @@ onMounted(load)
       <div class="form-grid">
         <label class="label">Image engine
           <select v-model="form.image_engine" class="select">
+            <option value="codex_sale">codex_sale</option>
             <option value="cloudflare_worker">cloudflare_worker</option>
             <option value="pollinations">pollinations</option>
           </select>
         </label>
+        <template v-if="form.image_engine === 'codex_sale'">
+          <label class="label">Codex Sale API key
+            <input v-model="form.codex_sale_api_key" class="input" type="password" autocomplete="off" />
+          </label>
+          <label class="label">Codex Sale base URL
+            <input v-model="form.codex_sale_base_url" class="input" />
+          </label>
+          <label class="label">Codex Sale image model
+            <input v-model="form.codex_sale_image_model" class="input" />
+          </label>
+          <label class="label">Codex Sale image size
+            <select v-model="form.codex_sale_image_size" class="select">
+              <option value="1024x1024">1024x1024</option>
+              <option value="1024x1536">1024x1536</option>
+              <option value="1536x1024">1536x1024</option>
+            </select>
+          </label>
+          <label class="label">Codex Sale timeout, seconds
+            <input v-model.number="form.codex_sale_timeout_seconds" class="input" type="number" min="30" />
+          </label>
+        </template>
         <template v-if="form.image_engine === 'cloudflare_worker'">
           <label class="label">Cloudflare Worker URL
             <input v-model="form.cloudflare_worker_url" class="input" placeholder="https://your-worker.your-subdomain.workers.dev" />

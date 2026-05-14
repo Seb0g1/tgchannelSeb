@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     cloudflare_worker_url: str | None = Field(None, alias="CLOUDFLARE_WORKER_URL")
     cloudflare_worker_api_key: str | None = Field(None, alias="CLOUDFLARE_WORKER_API_KEY")
     cloudflare_worker_timeout_seconds: int = Field(180, alias="CLOUDFLARE_WORKER_TIMEOUT_SECONDS")
+    codex_sale_api_key: str | None = Field(None, alias="CODEX_SALE_API_KEY")
+    codex_sale_base_url: str = Field("https://codex.sale/v1", alias="CODEX_SALE_BASE_URL")
+    codex_sale_image_model: str = Field("gpt-image-2", alias="CODEX_SALE_IMAGE_MODEL")
+    codex_sale_image_size: str = Field("1024x1024", alias="CODEX_SALE_IMAGE_SIZE")
+    codex_sale_timeout_seconds: int = Field(300, alias="CODEX_SALE_TIMEOUT_SECONDS")
 
 
 @lru_cache

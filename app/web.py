@@ -20,6 +20,7 @@ from telegram import Bot
 from app.config import Settings, get_settings
 from app.image_styler import (
     CloudflareWorkerImageStyler,
+    CodexSaleImageStyler,
     FreeTheAIImageStyler,
     HuggingFaceImageStyler,
     ImageGenerationError,
@@ -104,6 +105,11 @@ class AppSettingsPayload(BaseModel):
     cloudflare_worker_url: str | None = None
     cloudflare_worker_api_key: str | None = None
     cloudflare_worker_timeout_seconds: int = 180
+    codex_sale_api_key: str | None = None
+    codex_sale_base_url: str = "https://codex.sale/v1"
+    codex_sale_image_model: str = "gpt-image-2"
+    codex_sale_image_size: str = "1024x1024"
+    codex_sale_timeout_seconds: int = 300
 
 
 class ScheduleCreate(BaseModel):
@@ -348,6 +354,11 @@ def create_web_app() -> FastAPI:
             "cloudflare_worker_timeout_seconds": int(
                 db.get("cloudflare_worker_timeout_seconds", settings.cloudflare_worker_timeout_seconds)
             ),
+            "codex_sale_api_key": db.get("codex_sale_api_key", settings.codex_sale_api_key or ""),
+            "codex_sale_base_url": db.get("codex_sale_base_url", settings.codex_sale_base_url),
+            "codex_sale_image_model": db.get("codex_sale_image_model", settings.codex_sale_image_model),
+            "codex_sale_image_size": db.get("codex_sale_image_size", settings.codex_sale_image_size),
+            "codex_sale_timeout_seconds": int(db.get("codex_sale_timeout_seconds", settings.codex_sale_timeout_seconds)),
         }
 
     @app.patch("/api/settings")
@@ -765,10 +776,33 @@ def create_web_app() -> FastAPI:
                     "message": "Cloudflare Worker premium image generated.",
                     "product": product_payload(product),
                 }
+            if engine == "codex_sale":
+                dynamic_settings = settings.model_copy(
+                    update={
+                        "codex_sale_api_key": repo.get_setting("codex_sale_api_key", settings.codex_sale_api_key or ""),
+                        "codex_sale_base_url": repo.get_setting("codex_sale_base_url", settings.codex_sale_base_url),
+                        "codex_sale_image_model": repo.get_setting("codex_sale_image_model", settings.codex_sale_image_model),
+                        "codex_sale_image_size": repo.get_setting("codex_sale_image_size", settings.codex_sale_image_size),
+                        "codex_sale_timeout_seconds": int(
+                            repo.get_setting("codex_sale_timeout_seconds", str(settings.codex_sale_timeout_seconds))
+                        ),
+                    }
+                )
+                styler = CodexSaleImageStyler(dynamic_settings)
+                try:
+                    image_path = await styler.generate(product)
+                except ImageGenerationError as exc:
+                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
+                repo.update_product_styled_image(product, image_path)
+                return {
+                    "status": "generated",
+                    "message": "Codex Sale premium image generated.",
+                    "product": product_payload(product),
+                }
             if engine != "comfyui":
                 return {
                     "status": "not_configured",
-                    "message": "Set image_engine=cloudflare_worker, pollinations, freetheai, local_sdcpp or huggingface in settings before generation.",
+                    "message": "Set image_engine=codex_sale, cloudflare_worker, pollinations, freetheai, local_sdcpp or huggingface in settings before generation.",
                     "product": product_payload(product),
                 }
         return {"status": "queued", "message": "ComfyUI integration placeholder is ready for workflow wiring."}
