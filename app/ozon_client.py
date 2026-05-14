@@ -200,18 +200,97 @@ class OzonClient:
         return list(dict.fromkeys(images))
 
     def _extract_price(self, *items: dict[str, Any]) -> str | None:
+        discount_candidates: list[tuple[float, str | None]] = []
+        fallback_candidates: list[tuple[float, str | None]] = []
         for item in items:
+            if not item:
+                continue
             price_block = item.get("price") if isinstance(item.get("price"), dict) else item
-            price = (
-                price_block.get("marketing_seller_price")
-                or price_block.get("marketing_price")
-                or price_block.get("price")
-                or price_block.get("old_price")
-                or item.get("marketing_seller_price")
-            )
-            if price not in (None, "", "0", 0):
-                return self._format_price(price, price_block.get("currency_code") or item.get("currency_code"))
+            currency = price_block.get("currency_code") or item.get("currency_code")
+            for key in (
+                "marketing_seller_price",
+                "marketing_price",
+                "auto_action_price",
+                "min_price",
+                "discount_price",
+                "client_price",
+                "seller_price",
+                "ozon_price",
+                "price",
+            ):
+                self._append_price_candidate(discount_candidates, price_block.get(key), currency)
+                self._append_price_candidate(discount_candidates, item.get(key), currency)
+            self._append_price_candidate(fallback_candidates, price_block.get("old_price"), currency)
+            self._append_price_candidate(fallback_candidates, item.get("old_price"), currency)
+
+            actions = item.get("actions") or price_block.get("actions") or []
+            if isinstance(actions, list):
+                for action in actions:
+                    if not isinstance(action, dict):
+                        continue
+                    action_currency = action.get("currency_code") or currency
+                    for key in ("price", "action_price", "discount_price", "marketing_price"):
+                        self._append_price_candidate(discount_candidates, action.get(key), action_currency)
+
+        candidates = discount_candidates or fallback_candidates
+        if not candidates:
+            return None
+        value, currency = min(candidates, key=lambda candidate: candidate[0])
+        return self._format_price(value, currency)
+
+    def _append_price_candidate(
+        self,
+        candidates: list[tuple[float, str | None]],
+        raw_price: Any,
+        currency: str | None,
+    ) -> None:
+        value = self._parse_price(raw_price)
+        if value is None:
+            return
+        if 100 <= value <= 500_000:
+            candidates.append((value, currency))
+
+    def _parse_price(self, raw_price: Any) -> float | None:
+        if raw_price in (None, "", "0", 0):
+            return None
+        if isinstance(raw_price, (int, float)):
+            return float(raw_price)
+        text = str(raw_price).strip().replace(" ", "").replace("\u00a0", "")
+        text = text.replace("\u20bd", "").replace("руб.", "").replace("руб", "")
+        if "," in text and "." not in text:
+            text = text.replace(",", ".")
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    def _format_price(self, price: Any, currency: str | None) -> str:
+        try:
+            value = float(price)
+            rendered = f"{value:,.0f}".replace(",", " ") if value.is_integer() else f"{value:,.2f}".replace(",", " ")
+        except (TypeError, ValueError):
+            rendered = str(price)
+        if currency == "RUB" or currency is None:
+            return f"{rendered} \u20bd"
+        return f"{rendered} {currency}"
+
+    def _extract_url(self, item: dict[str, Any]) -> str | None:
+        sku = item.get("sku")
+        if sku:
+            return f"https://www.ozon.ru/product/{sku}/"
         return None
+
+    def _is_active(self, item: dict[str, Any], stock_item: dict[str, Any]) -> bool:
+        visibility = str(item.get("visibility") or self.visibility).upper()
+        if visibility in {"ARCHIVED", "DISABLED", "INVISIBLE", "DELETED"}:
+            return False
+        stock = self._extract_stock(stock_item, item)
+        if stock is not None:
+            return stock > 0
+        return visibility in {"VISIBLE", "ALL", "IN_SALE", "ACTIVE"}
+
+    def _chunks(self, values: list[str], size: int) -> list[list[str]]:
+        return [values[index : index + size] for index in range(0, len(values), size)]
 
     def _extract_stock(self, *items: dict[str, Any]) -> int | None:
         for item in items:
@@ -234,30 +313,3 @@ class OzonClient:
                     return int(item[key])
         return None
 
-    def _format_price(self, price: Any, currency: str | None) -> str:
-        try:
-            value = float(price)
-            rendered = f"{value:,.0f}".replace(",", " ") if value.is_integer() else f"{value:,.2f}".replace(",", " ")
-        except (TypeError, ValueError):
-            rendered = str(price)
-        if currency == "RUB" or currency is None:
-            return f"{rendered} ₽"
-        return f"{rendered} {currency}"
-
-    def _extract_url(self, item: dict[str, Any]) -> str | None:
-        sku = item.get("sku")
-        if sku:
-            return f"https://www.ozon.ru/product/{sku}/"
-        return None
-
-    def _is_active(self, item: dict[str, Any], stock_item: dict[str, Any]) -> bool:
-        visibility = str(item.get("visibility") or self.visibility).upper()
-        if visibility in {"ARCHIVED", "DISABLED", "INVISIBLE", "DELETED"}:
-            return False
-        stock = self._extract_stock(stock_item, item)
-        if stock is not None:
-            return stock > 0
-        return visibility in {"VISIBLE", "ALL", "IN_SALE", "ACTIVE"}
-
-    def _chunks(self, values: list[str], size: int) -> list[list[str]]:
-        return [values[index : index + size] for index in range(0, len(values), size)]

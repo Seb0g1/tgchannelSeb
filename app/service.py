@@ -237,7 +237,9 @@ class PostService:
             if product is None:
                 raise ValueError("Product not found")
             images = self._product_images(product)
-            public_text = self._normalize_order_text(draft.text, product)
+            public_text = self._strip_markdown(draft.text)
+            public_text = self._normalize_price_text(public_text, product)
+            public_text = self._normalize_order_text(public_text, product)
             text = self._prepare_telegram_html(repo, public_text)
             order_markup = self._order_markup(product)
 
@@ -410,13 +412,31 @@ class PostService:
             return default
 
     def _prepare_telegram_html(self, repo: Repository, text: str) -> str:
-        rendered = escape(text)
+        rendered = escape(self._strip_markdown(text))
         for item in repo.list_premium_emojis(include_inactive=False):
             if not item.telegram_custom_emoji_id:
                 continue
             replacement = f'<tg-emoji emoji-id="{escape(item.telegram_custom_emoji_id)}">{escape(item.emoji)}</tg-emoji>'
             rendered = rendered.replace(escape(item.emoji), replacement)
         return rendered
+
+    def _strip_markdown(self, text: str) -> str:
+        cleaned = re.sub(r"^#{1,6}\s*", "", text.strip(), flags=re.MULTILINE)
+        cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+        cleaned = re.sub(r"__(.*?)__", r"\1", cleaned)
+        cleaned = re.sub(r"(?<!\*)\*(?!\s)(.*?)(?<!\s)\*(?!\*)", r"\1", cleaned)
+        cleaned = re.sub(r"(?<!_)_(?!\s)(.*?)(?<!\s)_(?!_)", r"\1", cleaned)
+        cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+        return cleaned.replace("**", "").replace("__", "").strip()
+
+    def _normalize_price_text(self, text: str, product: Product) -> str:
+        price = self._format_price(product.price)
+        if not price:
+            return text
+        pattern = r"(?im)^(\s*[-–—]?\s*(?:цена|стоимость)\s*[:：]\s*)(.+)$"
+        if not re.search(pattern, text):
+            return text
+        return re.sub(pattern, rf"\g<1>{price}", text).strip()
 
     def _normalize_order_text(self, text: str, product: Product) -> str:
         url = product.order_url or product.url
@@ -445,7 +465,26 @@ class PostService:
         url = product.order_url or product.url
         if not url or not url.startswith(("http://", "https://")):
             return None
-        return InlineKeyboardMarkup([[InlineKeyboardButton("Заказать", url=url)]])
+        price = self._format_price(product.price)
+        label = f"Заказать · {price}" if price else "Заказать"
+        return InlineKeyboardMarkup([[InlineKeyboardButton(label, url=url)]])
+
+    def _format_price(self, value: str | int | float | None) -> str | None:
+        if value in (None, "", 0, "0"):
+            return None
+        text = str(value).strip()
+        if "\u20bd" in text or "руб" in text.lower():
+            return re.sub(r"\s+", " ", text)
+        raw = re.sub(r"[^\d,\.]", "", text)
+        if not raw:
+            return text
+        raw = raw.replace(",", ".")
+        try:
+            amount = float(raw)
+        except ValueError:
+            return text
+        rendered = f"{amount:,.0f}".replace(",", " ") if amount.is_integer() else f"{amount:,.2f}".replace(",", " ")
+        return f"{rendered} \u20bd"
 
     def _draft_preview(self, draft: Draft, product: Product) -> str:
         return (

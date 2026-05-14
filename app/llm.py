@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Literal
 
 import httpx
@@ -73,6 +74,8 @@ class ProductPromptBuilder:
 5. Хэштеги.
 
 Запрещено:
+- Markdown-разметка: не используй **жирный**, *курсив*, __подчеркивание__, заголовки с # и любые звездочки для оформления;
+- HTML-разметка и теги;
 - длинные сухие списки характеристик;
 - фразы "главные характеристики:" если дальше идёт много строк;
 - сырой URL;
@@ -87,7 +90,18 @@ class ProductPromptBuilder:
         text = text.strip()
         if text.startswith("```"):
             text = text.strip("`").strip()
+        text = self._strip_markdown(text)
         return text
+
+    def _strip_markdown(self, text: str) -> str:
+        text = re.sub(r"^#{1,6}\s*", "", text, flags=re.MULTILINE)
+        text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+        text = re.sub(r"__(.*?)__", r"\1", text)
+        text = re.sub(r"(?<!\*)\*(?!\s)(.*?)(?<!\s)\*(?!\*)", r"\1", text)
+        text = re.sub(r"(?<!_)_(?!\s)(.*?)(?<!\s)_(?!_)", r"\1", text)
+        text = re.sub(r"`([^`]+)`", r"\1", text)
+        text = text.replace("**", "").replace("__", "")
+        return text.strip()
 
     def _compact_product_data(self, product: ProductData) -> dict:
         data = product.model_dump(mode="json")
@@ -153,7 +167,8 @@ class FreeTheAITextGenerator(ProductPromptBuilder):
                     "role": "system",
                     "content": (
                         "Ты пишешь премиальные Telegram-посты о парфюмерии на русском языке. "
-                        "Нельзя выдумывать факты о товаре. Ответ возвращай только готовым текстом поста."
+                        "Нельзя выдумывать факты о товаре. Ответ возвращай только готовым текстом поста "
+                        "без Markdown, HTML, звездочек для жирного текста и сырого URL."
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -265,7 +280,8 @@ class PollinationsTextGenerator(ProductPromptBuilder):
                     "role": "system",
                     "content": (
                         "Ты пишешь премиальные Telegram-посты о парфюмерии и уходе на русском языке. "
-                        "Нельзя выдумывать факты о товаре. Ответ возвращай только готовым текстом поста."
+                        "Нельзя выдумывать факты о товаре. Ответ возвращай только готовым текстом поста "
+                        "без Markdown, HTML, звездочек для жирного текста и сырого URL."
                     ),
                 },
                 {"role": "user", "content": prompt},
