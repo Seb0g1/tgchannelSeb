@@ -20,7 +20,12 @@ def build_app() -> tuple[Application, AsyncIOScheduler]:
 
     session_factory = make_session_factory(settings.database_url)
     ozon = OzonClient(settings.ozon_client_id, settings.ozon_api_key, settings.ozon_base_url)
-    generator = OllamaGenerator(settings.ollama_base_url, settings.ollama_model)
+    generator = OllamaGenerator(
+        settings.ollama_base_url,
+        settings.ollama_model,
+        timeout_seconds=settings.ollama_timeout_seconds,
+        num_predict=settings.ollama_num_predict,
+    )
     service = PostService(settings, session_factory, ozon, generator)
 
     app = Application.builder().token(settings.telegram_bot_token).build()

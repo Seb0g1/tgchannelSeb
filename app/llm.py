@@ -27,9 +27,11 @@ PREMIUM_EMOJI_RULES = """
 
 
 class OllamaGenerator:
-    def __init__(self, base_url: str, model: str) -> None:
+    def __init__(self, base_url: str, model: str, timeout_seconds: int = 300, num_predict: int = 650) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.timeout_seconds = timeout_seconds
+        self.num_predict = num_predict
 
     async def generate_post(self, product: ProductData, style: StyleName = "premium") -> str:
         prompt = self._build_prompt(product, style)
@@ -37,16 +39,22 @@ class OllamaGenerator:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0.7, "top_p": 0.9},
+            "options": {
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "num_predict": self.num_predict,
+                "num_ctx": 4096,
+            },
         }
-        async with httpx.AsyncClient(timeout=120) as client:
+        timeout = httpx.Timeout(self.timeout_seconds, connect=15)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(f"{self.base_url}/api/generate", json=payload)
             response.raise_for_status()
             data = response.json()
         return self._clean(data.get("response", ""))
 
     def _build_prompt(self, product: ProductData, style: StyleName) -> str:
-        data = product.model_dump(mode="json")
+        data = self._compact_product_data(product)
         return f"""
 Ты — контент-редактор премиального Telegram-канала о парфюмерии.
 На основе данных о товаре создай красивый пост для Telegram на русском языке.
@@ -88,3 +96,11 @@ class OllamaGenerator:
         if text.startswith("```"):
             text = text.strip("`").strip()
         return text
+
+    def _compact_product_data(self, product: ProductData) -> dict:
+        data = product.model_dump(mode="json")
+        if data.get("description"):
+            data["description"] = str(data["description"])[:1800]
+        data["attributes"] = data.get("attributes", [])[:30]
+        data["images"] = data.get("images", [])[:3]
+        return data

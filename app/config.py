@@ -18,6 +18,8 @@ class Settings(BaseSettings):
 
     ollama_base_url: str = Field("http://localhost:11434", alias="OLLAMA_BASE_URL")
     ollama_model: str = Field("qwen2.5:7b", alias="OLLAMA_MODEL")
+    ollama_timeout_seconds: int = Field(300, alias="OLLAMA_TIMEOUT_SECONDS")
+    ollama_num_predict: int = Field(650, alias="OLLAMA_NUM_PREDICT")
 
     database_url: str = Field("sqlite:///data/bot.sqlite3", alias="DATABASE_URL")
     app_mode: Literal["manual", "auto"] = Field("manual", alias="APP_MODE")
