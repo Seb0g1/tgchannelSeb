@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import time
 import hmac
@@ -35,6 +36,7 @@ from app.repository import Repository
 from app.service import PostService
 
 SESSION_COOKIE = "aromat_session"
+logger = logging.getLogger(__name__)
 
 
 class ProductUpdate(BaseModel):
@@ -439,7 +441,19 @@ def create_web_app() -> FastAPI:
 
     @app.post("/api/sync")
     async def sync_products(_: str = Depends(require_admin)):
-        return await post_service.sync_products()
+        try:
+            return await post_service.sync_products()
+        except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:700] if exc.response is not None else ""
+            status_code = exc.response.status_code if exc.response is not None else "unknown"
+            logger.exception("Ozon sync failed with HTTP status")
+            raise HTTPException(status_code=502, detail=f"Ozon API returned HTTP {status_code}: {body}") from exc
+        except httpx.HTTPError as exc:
+            logger.exception("Ozon sync failed with network error")
+            raise HTTPException(status_code=502, detail=f"Ozon API request failed: {exc}") from exc
+        except Exception as exc:
+            logger.exception("Ozon sync failed")
+            raise HTTPException(status_code=500, detail=f"Ozon sync failed: {exc}") from exc
 
     @app.get("/api/products")
     async def products(

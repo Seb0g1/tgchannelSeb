@@ -9,6 +9,7 @@ const products = ref<Product[]>([])
 const drafts = ref<Draft[]>([])
 const syncing = ref(false)
 const syncReport = ref<SyncReport | null>(null)
+const syncError = ref('')
 
 async function load() {
   const { data } = await api.get('/dashboard')
@@ -20,10 +21,13 @@ async function load() {
 
 async function syncOzon() {
   syncing.value = true
+  syncError.value = ''
   try {
     const { data } = await api.post<SyncReport>('/sync')
     syncReport.value = data
     await load()
+  } catch (error: any) {
+    syncError.value = error.response?.data?.detail || error.message || 'Sync failed'
   } finally {
     syncing.value = false
   }
@@ -51,6 +55,11 @@ onMounted(load)
 
   <div v-if="loading" class="panel empty">Загружаю данные...</div>
   <template v-else>
+    <section v-if="syncError" class="panel sync-error">
+      <strong>Ozon sync error</strong>
+      <p>{{ syncError }}</p>
+    </section>
+
     <section v-if="syncReport" class="panel sync-report">
       <div class="section">
         <h2>Ozon sync report</h2>
