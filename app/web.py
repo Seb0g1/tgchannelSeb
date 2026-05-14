@@ -5,7 +5,7 @@ import time
 import hmac
 import hashlib
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import uvicorn
@@ -366,11 +366,14 @@ def create_web_app() -> FastAPI:
 
     @app.post("/api/schedule")
     async def create_schedule(payload: ScheduleCreate, _: str = Depends(require_admin)):
+        scheduled_at = payload.scheduled_at
+        if scheduled_at.tzinfo is not None:
+            scheduled_at = scheduled_at.astimezone(timezone.utc).replace(tzinfo=None)
         with session_factory() as session:
             repo = Repository(session)
             if repo.get_draft(payload.draft_id) is None:
                 raise HTTPException(status_code=404, detail="Draft not found")
-            item = repo.create_scheduled_post(payload.draft_id, payload.scheduled_at)
+            item = repo.create_scheduled_post(payload.draft_id, scheduled_at)
         return scheduled_payload(item)
 
     @app.delete("/api/schedule/{scheduled_id}")

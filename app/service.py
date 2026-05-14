@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from html import escape
 from io import BytesIO
 from collections.abc import Callable
@@ -273,6 +274,30 @@ class PostService:
             if draft and product:
                 repo.mark_published(product, draft)
         await app.bot.send_message(self.settings.telegram_owner_id, f"Опубликовано: черновик #{draft_id}")
+
+    async def process_scheduled_posts(self, app: Application) -> None:
+        with self.session_factory() as session:
+            repo = Repository(session)
+            due_items = repo.due_scheduled_posts(datetime.utcnow(), limit=5)
+            due = [(item.id, item.draft_id) for item in due_items]
+
+        for scheduled_id, draft_id in due:
+            try:
+                await self.publish_draft(app, draft_id)
+            except Exception:
+                logger.exception("Scheduled publication failed: schedule=%s draft=%s", scheduled_id, draft_id)
+                with self.session_factory() as session:
+                    repo = Repository(session)
+                    item = repo.get_scheduled_post(scheduled_id)
+                    if item:
+                        repo.update_scheduled_status(item, "failed")
+                continue
+
+            with self.session_factory() as session:
+                repo = Repository(session)
+                item = repo.get_scheduled_post(scheduled_id)
+                if item:
+                    repo.update_scheduled_status(item, "published")
 
     async def regenerate_draft(self, app: Application, draft_id: int) -> int:
         with self.session_factory() as session:

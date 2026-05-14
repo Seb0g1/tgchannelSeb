@@ -233,6 +233,19 @@ class Repository:
             stmt = stmt.where(ScheduledPost.status == status)
         return list(self.session.scalars(stmt))
 
+    def get_scheduled_post(self, scheduled_id: int) -> ScheduledPost | None:
+        return self.session.get(ScheduledPost, scheduled_id)
+
+    def due_scheduled_posts(self, now: datetime, limit: int = 10) -> list[ScheduledPost]:
+        return list(
+            self.session.scalars(
+                select(ScheduledPost)
+                .where(ScheduledPost.status == "scheduled", ScheduledPost.scheduled_at <= now)
+                .order_by(ScheduledPost.scheduled_at.asc())
+                .limit(limit)
+            )
+        )
+
     def create_scheduled_post(self, draft_id: int, scheduled_at: datetime) -> ScheduledPost:
         item = ScheduledPost(draft_id=draft_id, scheduled_at=scheduled_at)
         self.session.add(item)
@@ -246,6 +259,10 @@ class Repository:
         self.session.delete(item)
         self.session.commit()
         return True
+
+    def update_scheduled_status(self, item: ScheduledPost, status: str) -> None:
+        item.status = status
+        self.session.commit()
 
     def set_setting(self, key: str, value: str) -> None:
         setting = self.session.get(Setting, key)

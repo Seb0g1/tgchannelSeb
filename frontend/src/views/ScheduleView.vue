@@ -33,7 +33,7 @@ onMounted(load)
     <div>
       <div class="eyebrow">calendar</div>
       <h1>Очередь публикаций</h1>
-      <p class="muted">Календарь запланированных черновиков.</p>
+      <p class="muted">Календарь запланированных черновиков. Бот проверяет очередь каждую минуту.</p>
     </div>
   </section>
 

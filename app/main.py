@@ -45,6 +45,15 @@ def build_app() -> tuple[Application, AsyncIOScheduler]:
         id="sync_and_prepare",
         replace_existing=True,
     )
+    scheduler.add_job(
+        service.process_scheduled_posts,
+        "interval",
+        minutes=1,
+        args=[app],
+        id="process_scheduled_posts",
+        replace_existing=True,
+        max_instances=1,
+    )
     return app, scheduler
 
 
