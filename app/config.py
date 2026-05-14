@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     local_image_seed: int = Field(-1, alias="LOCAL_IMAGE_SEED")
     local_image_threads: int = Field(4, alias="LOCAL_IMAGE_THREADS")
     local_image_timeout_seconds: int = Field(1800, alias="LOCAL_IMAGE_TIMEOUT_SECONDS")
+    freetheai_api_key: str | None = Field(None, alias="FREETHEAI_API_KEY")
+    freetheai_base_url: str = Field("https://api.freetheai.xyz/v1", alias="FREETHEAI_BASE_URL")
+    freetheai_image_model: str = Field("img/gpt-image-2", alias="FREETHEAI_IMAGE_MODEL")
+    freetheai_timeout_seconds: int = Field(180, alias="FREETHEAI_TIMEOUT_SECONDS")
 
 
 @lru_cache

@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from telegram import Bot
 
 from app.config import Settings, get_settings
-from app.image_styler import HuggingFaceImageStyler, ImageGenerationError, LocalSdcppImageStyler
+from app.image_styler import FreeTheAIImageStyler, HuggingFaceImageStyler, ImageGenerationError, LocalSdcppImageStyler
 from app.llm import OllamaGenerator
 from app.logging_config import setup_logging
 from app.models import Draft, PremiumEmoji, Product, make_session_factory
@@ -74,6 +74,10 @@ class AppSettingsPayload(BaseModel):
     local_image_seed: int = -1
     local_image_threads: int = 4
     local_image_timeout_seconds: int = 1800
+    freetheai_api_key: str | None = None
+    freetheai_base_url: str = "https://api.freetheai.xyz/v1"
+    freetheai_image_model: str = "img/gpt-image-2"
+    freetheai_timeout_seconds: int = 180
 
 
 class ScheduleCreate(BaseModel):
@@ -251,6 +255,10 @@ def create_web_app() -> FastAPI:
             "local_image_seed": int(db.get("local_image_seed", settings.local_image_seed)),
             "local_image_threads": int(db.get("local_image_threads", settings.local_image_threads)),
             "local_image_timeout_seconds": int(db.get("local_image_timeout_seconds", settings.local_image_timeout_seconds)),
+            "freetheai_api_key": db.get("freetheai_api_key", settings.freetheai_api_key) or "",
+            "freetheai_base_url": db.get("freetheai_base_url", settings.freetheai_base_url),
+            "freetheai_image_model": db.get("freetheai_image_model", settings.freetheai_image_model),
+            "freetheai_timeout_seconds": int(db.get("freetheai_timeout_seconds", settings.freetheai_timeout_seconds)),
         }
 
     @app.patch("/api/settings")
@@ -464,10 +472,28 @@ def create_web_app() -> FastAPI:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
                 return {"status": "generated", "message": "Local premium image generated.", "product": product_payload(product)}
+            if engine == "freetheai":
+                dynamic_settings = settings.model_copy(
+                    update={
+                        "freetheai_api_key": repo.get_setting("freetheai_api_key", settings.freetheai_api_key or ""),
+                        "freetheai_base_url": repo.get_setting("freetheai_base_url", settings.freetheai_base_url),
+                        "freetheai_image_model": repo.get_setting("freetheai_image_model", settings.freetheai_image_model),
+                        "freetheai_timeout_seconds": int(
+                            repo.get_setting("freetheai_timeout_seconds", str(settings.freetheai_timeout_seconds))
+                        ),
+                    }
+                )
+                styler = FreeTheAIImageStyler(dynamic_settings)
+                try:
+                    image_path = await styler.generate(product)
+                except ImageGenerationError as exc:
+                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
+                repo.update_product_styled_image(product, image_path)
+                return {"status": "generated", "message": "FreeTheAI premium image generated.", "product": product_payload(product)}
             if engine != "comfyui":
                 return {
                     "status": "not_configured",
-                    "message": "Set image_engine=local_sdcpp or huggingface in settings before generation.",
+                    "message": "Set image_engine=freetheai, local_sdcpp or huggingface in settings before generation.",
                     "product": product_payload(product),
                 }
         return {"status": "queued", "message": "ComfyUI integration placeholder is ready for workflow wiring."}

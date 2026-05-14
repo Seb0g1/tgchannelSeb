@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import shlex
@@ -278,4 +279,120 @@ class LocalSdcppImageStyler:
         return (
             "different bottle, changed label, fake logo, changed packaging, text, watermark, "
             "blurry, low quality, distorted product, extra bottle, hands, people, cartoon"
+        )
+
+
+class FreeTheAIImageStyler:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.output_dir = Path("data/styled_images")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    async def generate(self, product: Product) -> str:
+        if not self.settings.freetheai_api_key:
+            raise ImageGenerationError("FREETHEAI_API_KEY is empty. Add FreeTheAI key to .env or settings.")
+
+        source_image = await self._download_source_image(product)
+        if source_image is None:
+            raise ImageGenerationError("Product has no downloadable source image for FreeTheAI edit.")
+
+        output_path = self.output_dir / f"product_{product.id}.png"
+        data_url = self._image_data_url(source_image)
+        payload = {
+            "model": self.settings.freetheai_image_model,
+            "prompt": self._build_prompt(product),
+            "image": data_url,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.settings.freetheai_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.freetheai_timeout_seconds) as client:
+                response = await client.post(
+                    f"{self.settings.freetheai_base_url.rstrip('/')}/images/edits",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                image_bytes = await self._extract_image_bytes(client, response.json())
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text[-1600:] if exc.response is not None else str(exc)
+            raise ImageGenerationError(f"FreeTheAI returned HTTP {exc.response.status_code}: {detail}") from exc
+        except httpx.HTTPError as exc:
+            raise ImageGenerationError(f"FreeTheAI request failed: {exc}") from exc
+        except Exception as exc:
+            logger.exception("FreeTheAI image edit failed")
+            raise ImageGenerationError(str(exc)) from exc
+
+        output_path.write_bytes(image_bytes)
+        return str(output_path)
+
+    async def _download_source_image(self, product: Product) -> BytesIO | None:
+        source_url = self._source_image_url(product)
+        if source_url is None:
+            return None
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; aromat-day/1.0)",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(45, connect=15), follow_redirects=True, headers=headers) as client:
+                response = await client.get(source_url)
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "")
+                if "image" not in content_type:
+                    logger.warning("Source URL did not return an image: %s (%s)", source_url, content_type)
+                    return None
+        except httpx.HTTPError as exc:
+            logger.warning("Could not download source product image %s: %s", source_url, exc)
+            return None
+
+        image = BytesIO(response.content)
+        image.seek(0)
+        return image
+
+    def _image_data_url(self, source_image: BytesIO) -> str:
+        output = BytesIO()
+        with Image.open(source_image) as image:
+            image.convert("RGB").save(output, format="PNG")
+        encoded = base64.b64encode(output.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+
+    async def _extract_image_bytes(self, client: httpx.AsyncClient, result: dict) -> bytes:
+        item = (result.get("data") or [{}])[0]
+        if item.get("b64_json"):
+            return base64.b64decode(item["b64_json"])
+        if item.get("url"):
+            response = await client.get(item["url"])
+            response.raise_for_status()
+            return response.content
+        raise ImageGenerationError(f"No image found in FreeTheAI response: {result}")
+
+    def _source_image_url(self, product: Product) -> str | None:
+        try:
+            images = json.loads(product.images_json or "[]")
+        except json.JSONDecodeError:
+            images = []
+        if not isinstance(images, list):
+            return None
+        for image in images:
+            if isinstance(image, str) and image.startswith("http"):
+                return image
+        return None
+
+    def _build_prompt(self, product: Product) -> str:
+        brand = product.brand or "premium fragrance"
+        name = product.name or "perfume"
+        return (
+            "Improve this real perfume product photo for a premium Telegram fragrance channel. "
+            "Keep the exact product identity unchanged: same bottle shape, same packaging, same label, "
+            "same colors, same cap and same proportions. Do not invent another perfume. "
+            "Only improve the background, lighting, contrast, reflections and overall premium look. "
+            "Elegant luxury perfume editorial scene, soft studio lighting, dark silk or glass background, "
+            "subtle warm gold accents, clean expensive cosmetic advertising style, realistic product photography. "
+            "No text, no watermark, no fake logo, no extra products. "
+            f"Product context: {brand} {name}."
         )

@@ -31,6 +31,10 @@ const form = ref({
   local_image_seed: -1,
   local_image_threads: 4,
   local_image_timeout_seconds: 1800,
+  freetheai_api_key: '',
+  freetheai_base_url: 'https://api.freetheai.xyz/v1',
+  freetheai_image_model: 'img/gpt-image-2',
+  freetheai_timeout_seconds: 180,
 })
 
 async function load() {
@@ -105,6 +109,7 @@ onMounted(load)
         <label class="label">Генератор
           <select v-model="form.image_engine" class="select">
             <option value="none">none</option>
+            <option value="freetheai">freetheai</option>
             <option value="local_sdcpp">local_sdcpp</option>
             <option value="huggingface">huggingface</option>
             <option value="comfyui">comfyui</option>
@@ -130,6 +135,18 @@ onMounted(load)
         </label>
         <label class="label">ComfyUI URL
           <input v-model="form.comfyui_base_url" class="input" />
+        </label>
+        <label class="label">FreeTheAI API key
+          <input v-model="form.freetheai_api_key" class="input" type="password" autocomplete="off" />
+        </label>
+        <label class="label">FreeTheAI base URL
+          <input v-model="form.freetheai_base_url" class="input" />
+        </label>
+        <label class="label">FreeTheAI image edit model
+          <input v-model="form.freetheai_image_model" class="input" />
+        </label>
+        <label class="label">FreeTheAI timeout, seconds
+          <input v-model.number="form.freetheai_timeout_seconds" class="input" type="number" min="30" />
         </label>
         <label class="label">stable-diffusion.cpp binary
           <input v-model="form.local_sdcpp_bin" class="input" />
