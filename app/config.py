@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     pollinations_image_height: int = Field(1280, alias="POLLINATIONS_IMAGE_HEIGHT")
     pollinations_image_quality: str = Field("medium", alias="POLLINATIONS_IMAGE_QUALITY")
     pollinations_image_timeout_seconds: int = Field(240, alias="POLLINATIONS_IMAGE_TIMEOUT_SECONDS")
+    cloudflare_worker_url: str | None = Field(None, alias="CLOUDFLARE_WORKER_URL")
+    cloudflare_worker_api_key: str | None = Field(None, alias="CLOUDFLARE_WORKER_API_KEY")
+    cloudflare_worker_timeout_seconds: int = Field(180, alias="CLOUDFLARE_WORKER_TIMEOUT_SECONDS")
 
 
 @lru_cache

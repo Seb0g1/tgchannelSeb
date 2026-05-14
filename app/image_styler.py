@@ -792,3 +792,31 @@ class PollinationsImageStyler:
             except OSError:
                 continue
         return ImageFont.load_default()
+
+
+class CloudflareWorkerImageStyler(PollinationsImageStyler):
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(settings)
+
+    async def generate(self, product: Product) -> str:
+        if not self.settings.cloudflare_worker_url:
+            raise ImageGenerationError("CLOUDFLARE_WORKER_URL is empty. Add your Cloudflare Worker URL to .env or settings.")
+        if not self.settings.cloudflare_worker_api_key:
+            raise ImageGenerationError("CLOUDFLARE_WORKER_API_KEY is empty. Add your Worker API key to .env or settings.")
+
+        output_path = self.output_dir / f"product_{product.id}.png"
+        payload = {"prompt": self._build_prompt(product)}
+        headers = {
+            "Authorization": f"Bearer {self.settings.cloudflare_worker_api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=self.settings.cloudflare_worker_timeout_seconds) as client:
+            response = await client.post(self.settings.cloudflare_worker_url.rstrip("/"), headers=headers, json=payload)
+            if response.status_code >= 400:
+                detail = response.text[-1600:]
+                raise ImageGenerationError(f"Cloudflare Worker returned HTTP {response.status_code}: {detail}")
+            image_bytes = response.content
+
+        image_bytes = self._apply_aromat_day_overlay(image_bytes, product)
+        output_path.write_bytes(image_bytes)
+        return str(output_path)

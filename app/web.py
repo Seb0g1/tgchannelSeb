@@ -19,6 +19,7 @@ from telegram import Bot
 
 from app.config import Settings, get_settings
 from app.image_styler import (
+    CloudflareWorkerImageStyler,
     FreeTheAIImageStyler,
     HuggingFaceImageStyler,
     ImageGenerationError,
@@ -100,6 +101,9 @@ class AppSettingsPayload(BaseModel):
     pollinations_image_height: int = 1280
     pollinations_image_quality: str = "medium"
     pollinations_image_timeout_seconds: int = 240
+    cloudflare_worker_url: str | None = None
+    cloudflare_worker_api_key: str | None = None
+    cloudflare_worker_timeout_seconds: int = 180
 
 
 class ScheduleCreate(BaseModel):
@@ -338,6 +342,11 @@ def create_web_app() -> FastAPI:
             "pollinations_image_quality": db.get("pollinations_image_quality", settings.pollinations_image_quality),
             "pollinations_image_timeout_seconds": int(
                 db.get("pollinations_image_timeout_seconds", settings.pollinations_image_timeout_seconds)
+            ),
+            "cloudflare_worker_url": db.get("cloudflare_worker_url", settings.cloudflare_worker_url or ""),
+            "cloudflare_worker_api_key": db.get("cloudflare_worker_api_key", settings.cloudflare_worker_api_key or ""),
+            "cloudflare_worker_timeout_seconds": int(
+                db.get("cloudflare_worker_timeout_seconds", settings.cloudflare_worker_timeout_seconds)
             ),
         }
 
@@ -720,10 +729,46 @@ def create_web_app() -> FastAPI:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
                 return {"status": "generated", "message": "Pollinations premium image generated.", "product": product_payload(product)}
+            if engine == "cloudflare_worker":
+                dynamic_settings = settings.model_copy(
+                    update={
+                        "cloudflare_worker_url": repo.get_setting(
+                            "cloudflare_worker_url",
+                            settings.cloudflare_worker_url or "",
+                        ),
+                        "cloudflare_worker_api_key": repo.get_setting(
+                            "cloudflare_worker_api_key",
+                            settings.cloudflare_worker_api_key or "",
+                        ),
+                        "cloudflare_worker_timeout_seconds": int(
+                            repo.get_setting(
+                                "cloudflare_worker_timeout_seconds",
+                                str(settings.cloudflare_worker_timeout_seconds),
+                            )
+                        ),
+                        "pollinations_image_width": int(
+                            repo.get_setting("pollinations_image_width", str(settings.pollinations_image_width))
+                        ),
+                        "pollinations_image_height": int(
+                            repo.get_setting("pollinations_image_height", str(settings.pollinations_image_height))
+                        ),
+                    }
+                )
+                styler = CloudflareWorkerImageStyler(dynamic_settings)
+                try:
+                    image_path = await styler.generate(product)
+                except ImageGenerationError as exc:
+                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
+                repo.update_product_styled_image(product, image_path)
+                return {
+                    "status": "generated",
+                    "message": "Cloudflare Worker premium image generated.",
+                    "product": product_payload(product),
+                }
             if engine != "comfyui":
                 return {
                     "status": "not_configured",
-                    "message": "Set image_engine=pollinations, freetheai, local_sdcpp or huggingface in settings before generation.",
+                    "message": "Set image_engine=cloudflare_worker, pollinations, freetheai, local_sdcpp or huggingface in settings before generation.",
                     "product": product_payload(product),
                 }
         return {"status": "queued", "message": "ComfyUI integration placeholder is ready for workflow wiring."}

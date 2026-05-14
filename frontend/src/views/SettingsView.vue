@@ -54,6 +54,9 @@ const form = ref({
   pollinations_image_height: 1280,
   pollinations_image_quality: 'medium',
   pollinations_image_timeout_seconds: 240,
+  cloudflare_worker_url: '',
+  cloudflare_worker_api_key: '',
+  cloudflare_worker_timeout_seconds: 180,
 })
 
 async function load() {
@@ -62,7 +65,6 @@ async function load() {
     ...form.value,
     ...data,
     text_engine: 'pollinations',
-    image_engine: 'pollinations',
     pollinations_image_model: data.pollinations_image_model === 'kontext' ? 'zimage' : (data.pollinations_image_model || 'zimage'),
   }
 
@@ -83,7 +85,6 @@ async function save() {
   saving.value = true
   saved.value = false
   form.value.text_engine = 'pollinations'
-  form.value.image_engine = 'pollinations'
   await api.patch('/settings', form.value)
   saving.value = false
   saved.value = true
@@ -159,11 +160,28 @@ onMounted(load)
     <div class="panel">
       <div class="block-head">
         <div>
-          <div class="eyebrow">pollinations image</div>
+          <div class="eyebrow">image generation</div>
           <h2><Sparkles :size="20" /> Premium-картинки</h2>
         </div>
       </div>
       <div class="form-grid">
+        <label class="label">Image engine
+          <select v-model="form.image_engine" class="select">
+            <option value="cloudflare_worker">cloudflare_worker</option>
+            <option value="pollinations">pollinations</option>
+          </select>
+        </label>
+        <template v-if="form.image_engine === 'cloudflare_worker'">
+          <label class="label">Cloudflare Worker URL
+            <input v-model="form.cloudflare_worker_url" class="input" placeholder="https://your-worker.your-subdomain.workers.dev" />
+          </label>
+          <label class="label">Cloudflare Worker API key
+            <input v-model="form.cloudflare_worker_api_key" class="input" type="password" autocomplete="off" />
+          </label>
+          <label class="label">Cloudflare timeout, seconds
+            <input v-model.number="form.cloudflare_worker_timeout_seconds" class="input" type="number" min="30" />
+          </label>
+        </template>
         <label class="label">Режим
           <select v-model="form.image_generation_mode" class="select">
             <option value="image_to_image">image_to_image</option>
