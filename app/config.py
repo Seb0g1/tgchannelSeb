@@ -64,6 +64,16 @@ class Settings(BaseSettings):
     freetheai_text_model: str = Field("bbl/gpt-4.1", alias="FREETHEAI_TEXT_MODEL")
     freetheai_text_timeout_seconds: int = Field(180, alias="FREETHEAI_TEXT_TIMEOUT_SECONDS")
     freetheai_text_max_tokens: int = Field(900, alias="FREETHEAI_TEXT_MAX_TOKENS")
+    pollinations_api_key: str | None = Field(None, alias="POLLINATIONS_API_KEY")
+    pollinations_base_url: str = Field("https://gen.pollinations.ai", alias="POLLINATIONS_BASE_URL")
+    pollinations_text_model: str = Field("openai", alias="POLLINATIONS_TEXT_MODEL")
+    pollinations_text_timeout_seconds: int = Field(180, alias="POLLINATIONS_TEXT_TIMEOUT_SECONDS")
+    pollinations_text_max_tokens: int = Field(900, alias="POLLINATIONS_TEXT_MAX_TOKENS")
+    pollinations_image_model: str = Field("kontext", alias="POLLINATIONS_IMAGE_MODEL")
+    pollinations_image_width: int = Field(1024, alias="POLLINATIONS_IMAGE_WIDTH")
+    pollinations_image_height: int = Field(1280, alias="POLLINATIONS_IMAGE_HEIGHT")
+    pollinations_image_quality: str = Field("medium", alias="POLLINATIONS_IMAGE_QUALITY")
+    pollinations_image_timeout_seconds: int = Field(240, alias="POLLINATIONS_IMAGE_TIMEOUT_SECONDS")
 
 
 @lru_cache

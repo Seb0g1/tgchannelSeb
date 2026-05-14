@@ -462,3 +462,143 @@ class FreeTheAIImageStyler:
             "No text, no watermark, no fake logo, no extra products. "
             f"Product context: {brand} {name}."
         )
+
+
+class PollinationsImageStyler:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.output_dir = Path("data/styled_images")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    async def generate(self, product: Product) -> str:
+        if not self.settings.pollinations_api_key:
+            raise ImageGenerationError("POLLINATIONS_API_KEY is empty. Add Pollinations key to .env or settings.")
+
+        source_url = self._source_image_url(product)
+        if self.settings.image_generation_mode == "image_to_image" and not source_url:
+            raise ImageGenerationError("Product has no source image URL for Pollinations image editing.")
+
+        output_path = self.output_dir / f"product_{product.id}.png"
+        payload = {
+            "model": self.settings.pollinations_image_model,
+            "prompt": self._build_prompt(product),
+            "n": 1,
+            "size": f"{self.settings.pollinations_image_width}x{self.settings.pollinations_image_height}",
+            "quality": self.settings.pollinations_image_quality,
+            "response_format": "b64_json",
+            "safe": "true",
+        }
+        if source_url and self.settings.image_generation_mode == "image_to_image":
+            payload["image"] = source_url
+
+        headers = {
+            "Authorization": f"Bearer {self.settings.pollinations_api_key}",
+            "Content-Type": "application/json",
+        }
+        image_bytes = await self._request_image_generation(headers, payload)
+        output_path.write_bytes(image_bytes)
+        return str(output_path)
+
+    async def _request_image_generation(self, headers: dict[str, str], payload: dict) -> bytes:
+        url = f"{self.settings.pollinations_base_url.rstrip('/')}/v1/images/generations"
+        retry_statuses = {429, 500, 502, 503, 504}
+        max_attempts = 3
+
+        async with httpx.AsyncClient(timeout=self.settings.pollinations_image_timeout_seconds) as client:
+            last_error = "unknown error"
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = await client.post(url, headers=headers, json=payload)
+                    if response.status_code in retry_statuses:
+                        last_error = response.text[-1600:]
+                        if attempt < max_attempts:
+                            delay = self._retry_delay(response, attempt)
+                            logger.warning(
+                                "Pollinations image temporary error %s on attempt %s/%s. Retrying in %.1fs: %s",
+                                response.status_code,
+                                attempt,
+                                max_attempts,
+                                delay,
+                                last_error,
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        raise ImageGenerationError(
+                            f"Pollinations did not return an image after {max_attempts} attempts "
+                            f"(last HTTP {response.status_code}): {last_error}"
+                        )
+                    response.raise_for_status()
+                    return await self._extract_image_bytes(client, response.json())
+                except httpx.HTTPStatusError as exc:
+                    detail = exc.response.text[-1600:] if exc.response is not None else str(exc)
+                    raise ImageGenerationError(f"Pollinations returned HTTP {exc.response.status_code}: {detail}") from exc
+                except httpx.HTTPError as exc:
+                    last_error = str(exc)
+                    if attempt < max_attempts:
+                        delay = min(30.0, 3.0 * attempt)
+                        logger.warning(
+                            "Pollinations image request failed on attempt %s/%s. Retrying in %.1fs: %s",
+                            attempt,
+                            max_attempts,
+                            delay,
+                            exc,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise ImageGenerationError(f"Pollinations image request failed after {max_attempts} attempts: {exc}") from exc
+
+        raise ImageGenerationError(f"Pollinations did not return an image after {max_attempts} attempts: {last_error}")
+
+    async def _extract_image_bytes(self, client: httpx.AsyncClient, result: dict) -> bytes:
+        item = (result.get("data") or [{}])[0]
+        if item.get("b64_json"):
+            return base64.b64decode(item["b64_json"])
+        if item.get("url"):
+            response = await client.get(item["url"])
+            response.raise_for_status()
+            return response.content
+        raise ImageGenerationError(f"No image found in Pollinations response: {result}")
+
+    def _retry_delay(self, response: httpx.Response, attempt: int) -> float:
+        retry_after = response.headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(120.0, max(5.0, float(retry_after)))
+            except ValueError:
+                pass
+        if response.status_code == 429:
+            return 60.0
+        if response.status_code in {500, 502, 503, 504}:
+            return 30.0
+        return min(30.0, 4.0 * attempt)
+
+    def _source_image_url(self, product: Product) -> str | None:
+        try:
+            images = json.loads(product.images_json or "[]")
+        except json.JSONDecodeError:
+            images = []
+        if not isinstance(images, list):
+            return None
+        for image in images:
+            if isinstance(image, str) and image.startswith("http"):
+                return image
+        return None
+
+    def _build_prompt(self, product: Product) -> str:
+        brand = product.brand or "premium fragrance"
+        name = product.name or "perfume"
+        if self.settings.image_generation_mode == "image_to_image":
+            return (
+                "Premium edit of this real product photo for Telegram channel Aromat Day. "
+                "Preserve the exact real bottle, packaging, label, colors and proportions. "
+                "Improve only lighting, background, reflections and premium boutique look. "
+                "Luxury cosmetic advertising, dark silk or glass background, warm gold accents, "
+                "clean realistic product photography, no text, no watermark, no extra products. "
+                f"Product context: {brand} {name}."
+            )
+        return (
+            "Luxury premium perfume editorial image for Telegram channel Aromat Day, "
+            "elegant fragrance boutique mood, dark silk and glass background, warm gold light, "
+            "minimal clean cosmetic advertising composition, no text, no watermark. "
+            f"Product context: {brand} {name}."
+        )

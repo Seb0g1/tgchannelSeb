@@ -236,3 +236,116 @@ class FreeTheAITextGenerator(ProductPromptBuilder):
         if response.status_code in {429, 500, 502, 503, 504}:
             return 180.0
         return min(30.0, 4.0 * attempt)
+
+
+class PollinationsTextGenerator(ProductPromptBuilder):
+    def __init__(
+        self,
+        api_key: str | None,
+        base_url: str,
+        model: str,
+        timeout_seconds: int = 180,
+        max_tokens: int = 900,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+        self.max_tokens = max_tokens
+
+    async def generate_post(self, product: ProductData, style: StyleName = "premium") -> str:
+        if not self.api_key:
+            raise TextGenerationError("POLLINATIONS_API_KEY is empty. Add Pollinations key to .env or settings.")
+
+        prompt = self._build_prompt(product, style)
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты пишешь премиальные Telegram-посты о парфюмерии и уходе на русском языке. "
+                        "Нельзя выдумывать факты о товаре. Ответ возвращай только готовым текстом поста."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.72,
+            "max_tokens": self.max_tokens,
+            "stream": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        result = await self._request_chat_completion(headers, payload)
+        choices = result.get("choices") or []
+        if not choices:
+            raise TextGenerationError(f"Pollinations response has no choices: {result}")
+        content = (choices[0].get("message") or {}).get("content") or choices[0].get("text") or ""
+        if not content:
+            raise TextGenerationError(f"Pollinations response has no text content: {result}")
+        return self._clean(content)
+
+    async def _request_chat_completion(self, headers: dict[str, str], payload: dict) -> dict:
+        url = f"{self.base_url}/v1/chat/completions"
+        retry_statuses = {429, 500, 502, 503, 504}
+        max_attempts = 5
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            last_error = "unknown error"
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = await client.post(url, headers=headers, json=payload)
+                    if response.status_code in retry_statuses:
+                        last_error = response.text[-1600:]
+                        if attempt < max_attempts:
+                            delay = self._retry_delay(response, attempt)
+                            logger.warning(
+                                "Pollinations text temporary error %s on attempt %s/%s. Retrying in %.1fs: %s",
+                                response.status_code,
+                                attempt,
+                                max_attempts,
+                                delay,
+                                last_error,
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        raise TextGenerationError(
+                            f"Pollinations text did not return an answer after {max_attempts} attempts "
+                            f"(last HTTP {response.status_code}): {last_error}"
+                        )
+                    response.raise_for_status()
+                    return response.json()
+                except httpx.HTTPStatusError as exc:
+                    detail = exc.response.text[-1600:] if exc.response is not None else str(exc)
+                    raise TextGenerationError(f"Pollinations text returned HTTP {exc.response.status_code}: {detail}") from exc
+                except httpx.HTTPError as exc:
+                    last_error = str(exc)
+                    if attempt < max_attempts:
+                        delay = min(30.0, 3.0 * attempt)
+                        logger.warning(
+                            "Pollinations text request failed on attempt %s/%s. Retrying in %.1fs: %s",
+                            attempt,
+                            max_attempts,
+                            delay,
+                            exc,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise TextGenerationError(f"Pollinations text request failed after {max_attempts} attempts: {exc}") from exc
+
+        raise TextGenerationError(f"Pollinations text did not return an answer after {max_attempts} attempts: {last_error}")
+
+    def _retry_delay(self, response: httpx.Response, attempt: int) -> float:
+        retry_after = response.headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(120.0, max(5.0, float(retry_after)))
+            except ValueError:
+                pass
+        if response.status_code == 429:
+            return 60.0
+        if response.status_code in {500, 502, 503, 504}:
+            return 30.0
+        return min(30.0, 4.0 * attempt)

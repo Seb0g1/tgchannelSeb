@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import httpx
 import uvicorn
 from fastapi import Body, Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
@@ -16,7 +17,13 @@ from pydantic import BaseModel
 from telegram import Bot
 
 from app.config import Settings, get_settings
-from app.image_styler import FreeTheAIImageStyler, HuggingFaceImageStyler, ImageGenerationError, LocalSdcppImageStyler
+from app.image_styler import (
+    FreeTheAIImageStyler,
+    HuggingFaceImageStyler,
+    ImageGenerationError,
+    LocalSdcppImageStyler,
+    PollinationsImageStyler,
+)
 from app.llm import OllamaGenerator
 from app.logging_config import setup_logging
 from app.models import Draft, PremiumEmoji, Product, make_session_factory
@@ -82,6 +89,16 @@ class AppSettingsPayload(BaseModel):
     freetheai_text_model: str = "bbl/gpt-4.1"
     freetheai_text_timeout_seconds: int = 180
     freetheai_text_max_tokens: int = 900
+    pollinations_api_key: str | None = None
+    pollinations_base_url: str = "https://gen.pollinations.ai"
+    pollinations_text_model: str = "openai"
+    pollinations_text_timeout_seconds: int = 180
+    pollinations_text_max_tokens: int = 900
+    pollinations_image_model: str = "kontext"
+    pollinations_image_width: int = 1024
+    pollinations_image_height: int = 1280
+    pollinations_image_quality: str = "medium"
+    pollinations_image_timeout_seconds: int = 240
 
 
 class ScheduleCreate(BaseModel):
@@ -184,6 +201,34 @@ def scheduled_payload(item) -> dict:
     }
 
 
+async def fetch_pollinations_models(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    fallback: list[str],
+) -> list[str]:
+    try:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+    except Exception:
+        return fallback
+
+    raw_items = data.get("data") if isinstance(data, dict) else data
+    if not isinstance(raw_items, list):
+        return fallback
+    models: list[str] = []
+    for item in raw_items:
+        if isinstance(item, str):
+            models.append(item)
+        elif isinstance(item, dict):
+            model_id = item.get("id") or item.get("name") or item.get("model")
+            if model_id:
+                models.append(str(model_id))
+    unique = list(dict.fromkeys(models))
+    return unique or fallback
+
+
 def create_web_app() -> FastAPI:
     settings = get_settings()
     setup_logging(settings.log_level)
@@ -269,6 +314,22 @@ def create_web_app() -> FastAPI:
                 db.get("freetheai_text_timeout_seconds", settings.freetheai_text_timeout_seconds)
             ),
             "freetheai_text_max_tokens": int(db.get("freetheai_text_max_tokens", settings.freetheai_text_max_tokens)),
+            "pollinations_api_key": db.get("pollinations_api_key", settings.pollinations_api_key) or "",
+            "pollinations_base_url": db.get("pollinations_base_url", settings.pollinations_base_url),
+            "pollinations_text_model": db.get("pollinations_text_model", settings.pollinations_text_model),
+            "pollinations_text_timeout_seconds": int(
+                db.get("pollinations_text_timeout_seconds", settings.pollinations_text_timeout_seconds)
+            ),
+            "pollinations_text_max_tokens": int(
+                db.get("pollinations_text_max_tokens", settings.pollinations_text_max_tokens)
+            ),
+            "pollinations_image_model": db.get("pollinations_image_model", settings.pollinations_image_model),
+            "pollinations_image_width": int(db.get("pollinations_image_width", settings.pollinations_image_width)),
+            "pollinations_image_height": int(db.get("pollinations_image_height", settings.pollinations_image_height)),
+            "pollinations_image_quality": db.get("pollinations_image_quality", settings.pollinations_image_quality),
+            "pollinations_image_timeout_seconds": int(
+                db.get("pollinations_image_timeout_seconds", settings.pollinations_image_timeout_seconds)
+            ),
         }
 
     @app.patch("/api/settings")
@@ -279,6 +340,49 @@ def create_web_app() -> FastAPI:
             for key, value in values.items():
                 repo.set_setting(key, str(value))
         return values
+
+    @app.get("/api/model-options")
+    async def model_options(_: str = Depends(require_admin)):
+        with session_factory() as session:
+            repo = Repository(session)
+            api_key = repo.get_setting("pollinations_api_key", settings.pollinations_api_key or "")
+            base_url = repo.get_setting("pollinations_base_url", settings.pollinations_base_url).rstrip("/")
+
+        fallback_text = [
+            "openai",
+            "openai-fast",
+            "openai-large",
+            "gpt-5.5",
+            "gemini",
+            "gemini-fast",
+            "claude",
+            "claude-fast",
+            "qwen-large",
+            "mistral",
+            "deepseek",
+            "llama",
+        ]
+        fallback_image = [
+            "kontext",
+            "nanobanana",
+            "nanobanana-2",
+            "seedream5",
+            "gptimage",
+            "gpt-image-2",
+            "flux",
+            "zimage",
+            "qwen-image",
+            "klein",
+            "p-image-edit",
+        ]
+        if not api_key:
+            return {"pollinations_text": fallback_text, "pollinations_image": fallback_image}
+
+        headers = {"Authorization": f"Bearer {api_key}"}
+        async with httpx.AsyncClient(timeout=20) as client:
+            text_models = await fetch_pollinations_models(client, f"{base_url}/text/models", headers, fallback_text)
+            image_models = await fetch_pollinations_models(client, f"{base_url}/image/models", headers, fallback_image)
+        return {"pollinations_text": text_models, "pollinations_image": image_models}
 
     @app.get("/api/dashboard")
     async def dashboard(_: str = Depends(require_admin)):
@@ -500,10 +604,51 @@ def create_web_app() -> FastAPI:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
                 return {"status": "generated", "message": "FreeTheAI premium image generated.", "product": product_payload(product)}
+            if engine == "pollinations":
+                dynamic_settings = settings.model_copy(
+                    update={
+                        "pollinations_api_key": repo.get_setting(
+                            "pollinations_api_key",
+                            settings.pollinations_api_key or "",
+                        ),
+                        "pollinations_base_url": repo.get_setting(
+                            "pollinations_base_url",
+                            settings.pollinations_base_url,
+                        ),
+                        "pollinations_image_model": repo.get_setting(
+                            "pollinations_image_model",
+                            settings.pollinations_image_model,
+                        ),
+                        "pollinations_image_width": int(
+                            repo.get_setting("pollinations_image_width", str(settings.pollinations_image_width))
+                        ),
+                        "pollinations_image_height": int(
+                            repo.get_setting("pollinations_image_height", str(settings.pollinations_image_height))
+                        ),
+                        "pollinations_image_quality": repo.get_setting(
+                            "pollinations_image_quality",
+                            settings.pollinations_image_quality,
+                        ),
+                        "pollinations_image_timeout_seconds": int(
+                            repo.get_setting(
+                                "pollinations_image_timeout_seconds",
+                                str(settings.pollinations_image_timeout_seconds),
+                            )
+                        ),
+                        "image_generation_mode": repo.get_setting("image_generation_mode", settings.image_generation_mode),
+                    }
+                )
+                styler = PollinationsImageStyler(dynamic_settings)
+                try:
+                    image_path = await styler.generate(product)
+                except ImageGenerationError as exc:
+                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
+                repo.update_product_styled_image(product, image_path)
+                return {"status": "generated", "message": "Pollinations premium image generated.", "product": product_payload(product)}
             if engine != "comfyui":
                 return {
                     "status": "not_configured",
-                    "message": "Set image_engine=freetheai, local_sdcpp or huggingface in settings before generation.",
+                    "message": "Set image_engine=pollinations, freetheai, local_sdcpp or huggingface in settings before generation.",
                     "product": product_payload(product),
                 }
         return {"status": "queued", "message": "ComfyUI integration placeholder is ready for workflow wiring."}

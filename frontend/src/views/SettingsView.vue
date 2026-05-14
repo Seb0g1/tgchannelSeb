@@ -6,6 +6,10 @@ import { api } from '../api'
 const loading = ref(true)
 const saving = ref(false)
 const saved = ref(false)
+const modelOptions = ref({
+  pollinations_text: [] as string[],
+  pollinations_image: [] as string[],
+})
 const form = ref({
   app_mode: 'manual',
   post_style: 'premium',
@@ -39,11 +43,30 @@ const form = ref({
   local_image_timeout_seconds: 1800,
   freetheai_image_model: 'img/gpt-image-2',
   freetheai_timeout_seconds: 180,
+  pollinations_api_key: '',
+  pollinations_base_url: 'https://gen.pollinations.ai',
+  pollinations_text_model: 'openai',
+  pollinations_text_timeout_seconds: 180,
+  pollinations_text_max_tokens: 900,
+  pollinations_image_model: 'kontext',
+  pollinations_image_width: 1024,
+  pollinations_image_height: 1280,
+  pollinations_image_quality: 'medium',
+  pollinations_image_timeout_seconds: 240,
 })
 
 async function load() {
   const { data } = await api.get('/settings')
   form.value = data
+  try {
+    const models = await api.get('/model-options')
+    modelOptions.value = models.data
+  } catch {
+    modelOptions.value = {
+      pollinations_text: ['openai', 'openai-fast', 'gpt-5.5', 'gemini', 'claude', 'qwen-large', 'mistral'],
+      pollinations_image: ['kontext', 'nanobanana', 'seedream5', 'gptimage', 'gpt-image-2', 'flux', 'zimage', 'klein'],
+    }
+  }
   loading.value = false
 }
 
@@ -105,6 +128,7 @@ onMounted(load)
           <select v-model="form.text_engine" class="select">
             <option value="ollama">ollama</option>
             <option value="freetheai">freetheai</option>
+            <option value="pollinations">pollinations</option>
           </select>
         </label>
         <label class="label">Модель Ollama
@@ -131,6 +155,24 @@ onMounted(load)
         <label class="label">FreeTheAI max tokens
           <input v-model.number="form.freetheai_text_max_tokens" class="input" type="number" min="200" />
         </label>
+        <label class="label">Pollinations API key
+          <input v-model="form.pollinations_api_key" class="input" type="password" autocomplete="off" />
+        </label>
+        <label class="label">Pollinations base URL
+          <input v-model="form.pollinations_base_url" class="input" />
+        </label>
+        <label class="label">Pollinations text model
+          <input v-model="form.pollinations_text_model" class="input" list="pollinations-text-models" />
+          <datalist id="pollinations-text-models">
+            <option v-for="model in modelOptions.pollinations_text" :key="model" :value="model" />
+          </datalist>
+        </label>
+        <label class="label">Pollinations text timeout, seconds
+          <input v-model.number="form.pollinations_text_timeout_seconds" class="input" type="number" min="30" />
+        </label>
+        <label class="label">Pollinations max tokens
+          <input v-model.number="form.pollinations_text_max_tokens" class="input" type="number" min="200" />
+        </label>
       </div>
     </div>
 
@@ -146,6 +188,7 @@ onMounted(load)
           <select v-model="form.image_engine" class="select">
             <option value="none">none</option>
             <option value="freetheai">freetheai</option>
+            <option value="pollinations">pollinations</option>
             <option value="local_sdcpp">local_sdcpp</option>
             <option value="huggingface">huggingface</option>
             <option value="comfyui">comfyui</option>
@@ -162,6 +205,29 @@ onMounted(load)
         </label>
         <label class="label">FreeTheAI image timeout, seconds
           <input v-model.number="form.freetheai_timeout_seconds" class="input" type="number" min="30" />
+        </label>
+        <label class="label">Pollinations image model
+          <input v-model="form.pollinations_image_model" class="input" list="pollinations-image-models" />
+          <datalist id="pollinations-image-models">
+            <option v-for="model in modelOptions.pollinations_image" :key="model" :value="model" />
+          </datalist>
+        </label>
+        <label class="label">Pollinations quality
+          <select v-model="form.pollinations_image_quality" class="select">
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="hd">hd</option>
+          </select>
+        </label>
+        <label class="label">Pollinations width
+          <input v-model.number="form.pollinations_image_width" class="input" type="number" min="256" step="64" />
+        </label>
+        <label class="label">Pollinations height
+          <input v-model.number="form.pollinations_image_height" class="input" type="number" min="256" step="64" />
+        </label>
+        <label class="label">Pollinations timeout, seconds
+          <input v-model.number="form.pollinations_image_timeout_seconds" class="input" type="number" min="30" />
         </label>
         <label class="label">Hugging Face model
           <input v-model="form.hf_image_model" class="input" />
