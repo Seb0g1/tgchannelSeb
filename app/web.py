@@ -110,7 +110,7 @@ class AppSettingsPayload(BaseModel):
     pollinations_text_max_tokens: int = 900
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_text_model: str = "openrouter/free"
+    openrouter_text_model: str = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
     openrouter_text_timeout_seconds: int = 180
     openrouter_text_max_tokens: int = 900
     openrouter_site_url: str | None = None
