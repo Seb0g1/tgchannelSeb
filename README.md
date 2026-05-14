@@ -152,6 +152,11 @@ app/
   ozon_client.py   Ozon Seller API
   repository.py    работа с базой
   service.py       бизнес-логика
+frontend/
+  src/             Vue 3 + Vite + TypeScript web admin
+deploy/
+  *.service        systemd service templates
+  nginx-*.conf     Nginx reverse proxy config
 ```
 
 ## Проверка на нескольких товарах

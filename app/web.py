@@ -1,31 +1,37 @@
 from __future__ import annotations
 
 import secrets
+from pathlib import Path
 
 import uvicorn
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi import Body, Depends, FastAPI, HTTPException, status
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from app.config import Settings, get_settings
 from app.llm import OllamaGenerator
 from app.logging_config import setup_logging
-from app.models import make_session_factory
+from app.models import Draft, PremiumEmoji, Product, make_session_factory
 from app.ozon_client import OzonClient
 from app.repository import Repository
 from app.service import PostService
 
 security = HTTPBasic()
-templates = Jinja2Templates(directory="app/templates")
 
 
-def build_context(request: Request, settings: Settings) -> dict:
-    return {
-        "request": request,
-        "settings": settings,
-        "brand_name": "Аромат дня",
-    }
+class ProductUpdate(BaseModel):
+    order_url: str | None = None
+    is_active: bool = True
+    is_excluded: bool = False
+
+
+class EmojiCreate(BaseModel):
+    label: str
+    emoji: str
+    telegram_custom_emoji_id: str | None = None
+    description: str | None = None
 
 
 def require_admin(
@@ -41,6 +47,55 @@ def require_admin(
             headers={"WWW-Authenticate": "Basic"},
         )
     return credentials.username
+
+
+def product_payload(product: Product) -> dict:
+    return {
+        "id": product.id,
+        "offer_id": product.offer_id,
+        "product_id": product.product_id,
+        "sku": product.sku,
+        "name": product.name,
+        "brand": product.brand,
+        "category": product.category,
+        "description": product.description,
+        "price": product.price,
+        "stock": product.stock,
+        "url": product.url,
+        "order_url": product.order_url,
+        "visibility": product.visibility,
+        "is_active": product.is_active,
+        "is_excluded": product.is_excluded,
+        "is_published": product.is_published,
+        "styled_image_path": product.styled_image_path,
+        "created_at": product.created_at.isoformat() if product.created_at else None,
+        "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+    }
+
+
+def draft_payload(draft: Draft) -> dict:
+    return {
+        "id": draft.id,
+        "product_id": draft.product_id,
+        "text": draft.text,
+        "status": draft.status,
+        "style": draft.style,
+        "telegram_message_id": draft.telegram_message_id,
+        "created_at": draft.created_at.isoformat() if draft.created_at else None,
+        "updated_at": draft.updated_at.isoformat() if draft.updated_at else None,
+    }
+
+
+def emoji_payload(emoji: PremiumEmoji) -> dict:
+    return {
+        "id": emoji.id,
+        "label": emoji.label,
+        "emoji": emoji.emoji,
+        "telegram_custom_emoji_id": emoji.telegram_custom_emoji_id,
+        "description": emoji.description,
+        "is_active": emoji.is_active,
+        "created_at": emoji.created_at.isoformat() if emoji.created_at else None,
+    }
 
 
 def create_web_app() -> FastAPI:
@@ -60,135 +115,134 @@ def create_web_app() -> FastAPI:
         num_predict=settings.ollama_num_predict,
     )
     post_service = PostService(settings, session_factory, ozon, generator)
-    app = FastAPI(title="Аромат дня Admin")
+    app = FastAPI(title="Aromat Day Admin API")
 
-    @app.get("/")
-    async def dashboard(request: Request, _: str = Depends(require_admin)):
+    @app.get("/api/me")
+    async def me(_: str = Depends(require_admin)):
+        return {"name": "Аромат дня", "channel": settings.telegram_channel_id}
+
+    @app.get("/api/dashboard")
+    async def dashboard(_: str = Depends(require_admin)):
         with session_factory() as session:
             repo = Repository(session)
             counts = repo.dashboard_counts()
             products, _total = repo.search_products(status="new", limit=8)
             drafts = repo.list_drafts("pending", limit=8)
-        return templates.TemplateResponse(
-            "dashboard.html",
-            build_context(request, settings) | {"counts": counts, "products": products, "drafts": drafts},
-        )
+        return {
+            "counts": counts,
+            "products": [product_payload(item) for item in products],
+            "drafts": [draft_payload(item) for item in drafts],
+        }
 
-    @app.get("/products")
+    @app.get("/api/products")
     async def products(
-        request: Request,
         q: str = "",
         status_filter: str = "active",
         page: int = 1,
+        limit: int = 40,
         _: str = Depends(require_admin),
     ):
         page = max(1, page)
-        limit = 40
+        limit = min(max(1, limit), 100)
         offset = (page - 1) * limit
         with session_factory() as session:
             repo = Repository(session)
             items, total = repo.search_products(q, status_filter, limit, offset)
-        return templates.TemplateResponse(
-            "products.html",
-            build_context(request, settings)
-            | {
-                "products": items,
-                "total": total,
-                "q": q,
-                "status_filter": status_filter,
-                "page": page,
-                "limit": limit,
-            },
-        )
+        return {
+            "items": [product_payload(item) for item in items],
+            "total": total,
+            "page": page,
+            "limit": limit,
+        }
 
-    @app.get("/products/{product_id}")
-    async def product_detail(request: Request, product_id: int, _: str = Depends(require_admin)):
+    @app.get("/api/products/{product_id}")
+    async def product_detail(product_id: int, _: str = Depends(require_admin)):
         with session_factory() as session:
             repo = Repository(session)
             product = repo.get_product(product_id)
             if product is None:
                 raise HTTPException(status_code=404, detail="Product not found")
             attrs = repo.product_to_data(product).attributes
-            drafts = [draft for draft in repo.list_drafts("all", limit=30) if draft.product_id == product.id]
-        return templates.TemplateResponse(
-            "product_detail.html",
-            build_context(request, settings) | {"product": product, "attrs": attrs, "drafts": drafts},
-        )
+            drafts = [draft for draft in repo.list_drafts("all", limit=50) if draft.product_id == product.id]
+        return {
+            "product": product_payload(product),
+            "attributes": attrs,
+            "drafts": [draft_payload(item) for item in drafts],
+        }
 
-    @app.post("/products/{product_id}")
-    async def update_product(
-        product_id: int,
-        order_url: str = Form(""),
-        is_active: str | None = Form(None),
-        is_excluded: str | None = Form(None),
-        _: str = Depends(require_admin),
-    ):
+    @app.patch("/api/products/{product_id}")
+    async def update_product(product_id: int, payload: ProductUpdate = Body(...), _: str = Depends(require_admin)):
         with session_factory() as session:
             repo = Repository(session)
             product = repo.get_product(product_id)
             if product is None:
                 raise HTTPException(status_code=404, detail="Product not found")
-            repo.update_product_admin_fields(
-                product,
-                order_url.strip() or None,
-                is_active == "on",
-                is_excluded == "on",
-            )
-        return RedirectResponse(f"/products/{product_id}", status_code=303)
+            repo.update_product_admin_fields(product, payload.order_url, payload.is_active, payload.is_excluded)
+            return product_payload(product)
 
-    @app.post("/products/{product_id}/draft")
+    @app.post("/api/products/{product_id}/draft")
     async def create_draft(product_id: int, _: str = Depends(require_admin)):
         draft = await post_service.create_draft_for_product(product_id)
         if draft is None:
             raise HTTPException(status_code=400, detail="Draft was not created")
-        return RedirectResponse(f"/products/{product_id}", status_code=303)
+        return draft_payload(draft)
 
-    @app.get("/drafts")
-    async def drafts(request: Request, status_filter: str = "pending", page: int = 1, _: str = Depends(require_admin)):
+    @app.get("/api/drafts")
+    async def drafts(status_filter: str = "pending", page: int = 1, limit: int = 30, _: str = Depends(require_admin)):
         page = max(1, page)
-        limit = 30
+        limit = min(max(1, limit), 100)
         offset = (page - 1) * limit
         with session_factory() as session:
             repo = Repository(session)
             items = repo.list_drafts(status_filter, limit, offset)
             total = repo.count_drafts(status_filter)
-        return templates.TemplateResponse(
-            "drafts.html",
-            build_context(request, settings)
-            | {"drafts": items, "total": total, "status_filter": status_filter, "page": page, "limit": limit},
-        )
+        return {
+            "items": [draft_payload(item) for item in items],
+            "total": total,
+            "page": page,
+            "limit": limit,
+        }
 
-    @app.get("/emojis")
-    async def emojis(request: Request, _: str = Depends(require_admin)):
+    @app.get("/api/emojis")
+    async def emojis(_: str = Depends(require_admin)):
         with session_factory() as session:
             repo = Repository(session)
             items = repo.list_premium_emojis()
-        return templates.TemplateResponse("emojis.html", build_context(request, settings) | {"emojis": items})
+        return {"items": [emoji_payload(item) for item in items]}
 
-    @app.post("/emojis")
-    async def create_emoji(
-        label: str = Form(...),
-        emoji: str = Form(...),
-        telegram_custom_emoji_id: str = Form(""),
-        description: str = Form(""),
-        _: str = Depends(require_admin),
-    ):
+    @app.post("/api/emojis")
+    async def create_emoji(payload: EmojiCreate, _: str = Depends(require_admin)):
         with session_factory() as session:
             repo = Repository(session)
-            repo.create_premium_emoji(
-                label.strip(),
-                emoji.strip(),
-                telegram_custom_emoji_id.strip() or None,
-                description.strip() or None,
+            item = repo.create_premium_emoji(
+                payload.label.strip(),
+                payload.emoji.strip(),
+                payload.telegram_custom_emoji_id.strip() if payload.telegram_custom_emoji_id else None,
+                payload.description.strip() if payload.description else None,
             )
-        return RedirectResponse("/emojis", status_code=303)
+        return emoji_payload(item)
 
-    @app.post("/emojis/{emoji_id}/delete")
+    @app.delete("/api/emojis/{emoji_id}")
     async def delete_emoji(emoji_id: int, _: str = Depends(require_admin)):
         with session_factory() as session:
             repo = Repository(session)
-            repo.delete_premium_emoji(emoji_id)
-        return RedirectResponse("/emojis", status_code=303)
+            ok = repo.delete_premium_emoji(emoji_id)
+        return {"ok": ok}
+
+    frontend_dist = Path("frontend/dist")
+    if frontend_dist.exists():
+        app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
+
+        @app.get("/{path:path}")
+        async def spa(_: str = Depends(require_admin)):
+            return FileResponse(frontend_dist / "index.html")
+    else:
+        @app.get("/")
+        async def no_frontend(_: str = Depends(require_admin)):
+            return {
+                "status": "frontend_not_built",
+                "message": "Run `cd frontend && npm install && npm run build`.",
+            }
 
     return app
 

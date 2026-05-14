@@ -23,11 +23,24 @@ WEB_ADMIN_PASSWORD=change_this_password
 
 ```bash
 cd /opt/tgchannelSeb
+cd frontend
+npm install
+npm run build
+cd ..
 sudo cp deploy/tgchannelSeb-web.service /etc/systemd/system/tgchannelSeb-web.service
 sudo systemctl daemon-reload
 sudo systemctl enable tgchannelSeb-web
 sudo systemctl restart tgchannelSeb-web
 sudo systemctl status tgchannelSeb-web
+```
+
+If Node.js is missing:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v
+npm -v
 ```
 
 ## Install Nginx proxy
