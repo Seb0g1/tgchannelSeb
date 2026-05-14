@@ -374,6 +374,8 @@ class FreeTheAIImageStyler:
                 return min(60.0, max(1.0, float(retry_after)))
             except ValueError:
                 pass
+        if response.status_code == 429:
+            return 180.0
         return min(30.0, 4.0 * attempt)
 
     async def _download_source_image(self, product: Product) -> BytesIO | None:
