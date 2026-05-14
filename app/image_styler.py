@@ -501,7 +501,13 @@ class PollinationsImageStyler:
             "Authorization": f"Bearer {self.settings.pollinations_api_key}",
             "Content-Type": "application/json",
         }
-        image_bytes = await self._request_image_generation(headers, payload)
+        try:
+            image_bytes = await self._request_image_generation(headers, payload)
+        except ImageGenerationError as exc:
+            if not self._is_payment_required_error(exc):
+                raise
+            logger.warning("Pollinations balance is empty, using branded Ozon image fallback: %s", exc)
+            image_bytes = await self._build_free_source_fallback(product)
         image_bytes = self._apply_aromat_day_overlay(image_bytes, product)
         output_path.write_bytes(image_bytes)
         return str(output_path)
@@ -604,6 +610,51 @@ class PollinationsImageStyler:
             if isinstance(image, str) and image.startswith("http"):
                 return image
         return None
+
+    def _is_payment_required_error(self, exc: ImageGenerationError) -> bool:
+        text = str(exc)
+        return "HTTP 402" in text or "PAYMENT_REQUIRED" in text or "Insufficient balance" in text
+
+    async def _build_free_source_fallback(self, product: Product) -> bytes:
+        source_url = self._source_image_url(product)
+        if not source_url:
+            raise ImageGenerationError("Pollinations balance is empty and product has no Ozon image for fallback.")
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; aromat-day/1.0)",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        }
+        async with httpx.AsyncClient(timeout=40, follow_redirects=True, headers=headers) as client:
+            response = await client.get(source_url)
+            response.raise_for_status()
+
+        source = Image.open(BytesIO(response.content)).convert("RGBA")
+        target_w = self.settings.pollinations_image_width
+        target_h = self.settings.pollinations_image_height
+        canvas = Image.new("RGBA", (target_w, target_h), (15, 13, 12, 255))
+
+        bg = source.copy()
+        bg.thumbnail((target_w, target_h), Image.Resampling.LANCZOS)
+        bg_layer = Image.new("RGBA", (target_w, target_h), (15, 13, 12, 255))
+        bg_layer.paste(bg, ((target_w - bg.width) // 2, (target_h - bg.height) // 2), bg if bg.mode == "RGBA" else None)
+        bg_layer = bg_layer.filter(ImageFilter.GaussianBlur(radius=max(18, target_w // 34)))
+        veil = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 118))
+        canvas = Image.alpha_composite(bg_layer, veil)
+
+        product_image = source.copy()
+        product_image.thumbnail((int(target_w * 0.72), int(target_h * 0.72)), Image.Resampling.LANCZOS)
+        x = (target_w - product_image.width) // 2
+        y = max(24, int(target_h * 0.08))
+        shadow = Image.new("RGBA", product_image.size, (0, 0, 0, 0))
+        shadow_draw = ImageDraw.Draw(shadow)
+        shadow_draw.rounded_rectangle((10, 10, product_image.width - 10, product_image.height - 10), radius=20, fill=(0, 0, 0, 95))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(radius=18))
+        canvas.paste(shadow, (x + 8, y + 18), shadow)
+        canvas.paste(product_image, (x, y), product_image if product_image.mode == "RGBA" else None)
+
+        output = BytesIO()
+        canvas.convert("RGB").save(output, format="PNG", optimize=True)
+        return output.getvalue()
 
     def _build_prompt(self, product: Product) -> str:
         brand = product.brand or "premium fragrance"
