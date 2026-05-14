@@ -83,6 +83,24 @@ h2 { margin: 0 0 14px; font-size: 18px; }
 .metric { padding: 18px; }
 .metric span { color: var(--muted); font-size: 13px; }
 .metric strong { display: block; font-size: 32px; margin-top: 6px; }
+.sync-report { margin-bottom: 16px; }
+.report-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 0 18px 18px; }
+.report-grid div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, .025);
+}
+.report-grid span { display: block; color: var(--muted); font-size: 12px; }
+.report-grid strong { display: block; margin-top: 5px; font-size: 22px; }
+.skipped-list {
+  margin: 0 18px 18px;
+  padding: 12px;
+  border: 1px solid rgba(225, 181, 82, .26);
+  border-radius: 8px;
+  background: rgba(225, 181, 82, .06);
+}
+.skipped-list p { margin: 7px 0 0; font-size: 13px; }
 .two { display: grid; grid-template-columns: 1.25fr .75fr; gap: 16px; margin-top: 16px; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
 .input, .select, .textarea {
@@ -437,7 +455,7 @@ button:disabled {
   .shell { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; }
   .side-note { position: static; margin-top: 18px; }
-  .grid, .two { grid-template-columns: 1fr; }
+  .grid, .two, .report-grid { grid-template-columns: 1fr; }
   .product-hero, .product-layout, .product-stats { grid-template-columns: 1fr; }
   .product-media { min-height: 380px; }
   .product-summary h1 { font-size: 31px; }

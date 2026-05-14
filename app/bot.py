@@ -61,8 +61,14 @@ def register_handlers(app: Application, service: PostService, settings: Settings
 
     @guard
     async def sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        count = await service.sync_products()
-        await update.message.reply_text(f"Синхронизировано товаров: {count}")
+        report = await service.sync_products()
+        await update.message.reply_text(
+            "Ozon sync done.\n"
+            f"Received: {report['received']} / requested {report['requested']}\n"
+            f"Saved: {report['saved']}\n"
+            f"Skipped volume variants: {report['skipped_variants']}\n"
+            f"With stock: {report['with_stock']}"
+        )
 
     @guard
     async def products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

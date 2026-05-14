@@ -21,6 +21,7 @@ from app.llm import FreeTheAITextGenerator, OllamaGenerator, OpenRouterTextGener
 from app.models import Draft, Product
 from app.ozon_client import OzonClient
 from app.repository import Repository
+from app.schemas import ProductData
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +41,95 @@ class PostService:
         self.ozon = ozon
         self.generator = generator
 
-    async def sync_products(self) -> int:
-        limit = self._get_int_setting("max_products_per_sync", self.settings.max_products_per_sync)
+    async def sync_products(self) -> dict[str, object]:
+        configured_limit = self._get_int_setting("max_products_per_sync", self.settings.max_products_per_sync)
+        limit = min(1000, max(1, configured_limit))
         products = await self.ozon.fetch_products(limit)
+        unique_products, skipped_variants = self._skip_volume_variants(products)
         with self.session_factory() as session:
             repo = Repository(session)
-            for product in products:
+            for product in unique_products:
                 repo.upsert_product(product)
-        return len(products)
+        report = {
+            "requested": limit,
+            "received": len(products),
+            "saved": len(unique_products),
+            "skipped_variants": len(skipped_variants),
+            "active": sum(1 for product in unique_products if product.is_active),
+            "with_stock": sum(1 for product in unique_products if (product.stock or 0) > 0),
+            "sample_skipped": skipped_variants[:10],
+        }
+        logger.info(
+            "Ozon sync finished: requested=%s received=%s saved=%s skipped_variants=%s",
+            report["requested"],
+            report["received"],
+            report["saved"],
+            report["skipped_variants"],
+        )
+        return report
+
+    def _skip_volume_variants(self, products: list[ProductData]) -> tuple[list[ProductData], list[dict[str, str]]]:
+        seen: dict[str, ProductData] = {}
+        unique: list[ProductData] = []
+        skipped: list[dict[str, str]] = []
+
+        for product in products:
+            key = self._variant_family_key(product)
+            if not key:
+                unique.append(product)
+                continue
+            original = seen.get(key)
+            if original is None:
+                seen[key] = product
+                unique.append(product)
+                continue
+            skipped.append(
+                {
+                    "offer_id": product.offer_id,
+                    "name": product.name,
+                    "kept_offer_id": original.offer_id,
+                    "kept_name": original.name,
+                }
+            )
+        return unique, skipped
+
+    def _variant_family_key(self, product: ProductData) -> str:
+        name = self._normalize_variant_text(product.name)
+        brand = self._normalize_variant_text(product.brand or self._attribute_value(product, "brand") or "")
+        if len(name) < 4:
+            return ""
+        return f"{brand}|{name}"
+
+    def _normalize_variant_text(self, value: str) -> str:
+        text = value.lower().replace("\u0451", "\u0435")
+        unit = (
+            r"\u043c\u043b|ml|\u043c\u0438\u043b\u043b\u0438\u043b\u0438\u0442\u0440(?:\u0430|\u043e\u0432)?|"
+            r"\u043b|l|\u043b\u0438\u0442\u0440(?:\u0430|\u043e\u0432)?|"
+            r"\u0433|\u0433\u0440|g|kg|\u043a\u0433|\u0448\u0442|pcs|pieces|"
+            r"fl\.?\s*oz|oz|\u0443\u043d\u0446(?:\u0438\u044f|\u0438\u0438|\u0438\u0439)?"
+        )
+        text = re.sub(rf"\([^)]*(?:{unit})[^)]*\)", " ", text)
+        text = re.sub(rf"\b\d+\s*[x\u0445\u00d7]\s*\d+(?:[.,]\d+)?\s*(?:{unit})\b", " ", text)
+        text = re.sub(rf"\b\d+(?:[.,]\d+)?\s*(?:{unit})\b", " ", text)
+        text = re.sub(r"\b(?:\u043e\u0431\u044a\u0435\u043c|\u043e\u0431\u044c\u0435\u043c|volume|size)\s*[:=-]?\s*\d+(?:[.,]\d+)?\b", " ", text)
+        text = re.sub(r"[^a-z\u0430-\u044f0-9]+", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _attribute_value(self, product: ProductData, attribute_name: str) -> str | None:
+        for attribute in product.attributes:
+            name = str(attribute.get("name") or attribute.get("attribute_name") or "").lower()
+            if attribute_name not in name:
+                continue
+            values = attribute.get("values") or attribute.get("value")
+            if isinstance(values, list) and values:
+                first = values[0]
+                if isinstance(first, dict):
+                    return str(first.get("value") or first.get("name") or "") or None
+                return str(first) or None
+            if values:
+                return str(values)
+        return None
 
     async def create_next_draft(self) -> Draft | None:
         with self.session_factory() as session:

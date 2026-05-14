@@ -51,6 +51,21 @@ export type Draft = {
   updated_at: string | null
 }
 
+export type SyncReport = {
+  requested: number
+  received: number
+  saved: number
+  skipped_variants: number
+  active: number
+  with_stock: number
+  sample_skipped: Array<{
+    offer_id: string
+    name: string
+    kept_offer_id: string
+    kept_name: string
+  }>
+}
+
 export type PremiumEmoji = {
   id: number
   label: string

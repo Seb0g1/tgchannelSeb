@@ -380,6 +380,7 @@ def create_web_app() -> FastAPI:
     @app.patch("/api/settings")
     async def update_app_settings(payload: AppSettingsPayload, _: str = Depends(require_admin)):
         values = payload.model_dump()
+        values["max_products_per_sync"] = min(1000, max(1, int(values["max_products_per_sync"])))
         with session_factory() as session:
             repo = Repository(session)
             for key, value in values.items():
@@ -438,8 +439,7 @@ def create_web_app() -> FastAPI:
 
     @app.post("/api/sync")
     async def sync_products(_: str = Depends(require_admin)):
-        count = await post_service.sync_products()
-        return {"count": count}
+        return await post_service.sync_products()
 
     @app.get("/api/products")
     async def products(

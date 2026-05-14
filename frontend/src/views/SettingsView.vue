@@ -14,7 +14,7 @@ const modelOptions = ref({
 const form = ref({
   app_mode: 'manual',
   post_style: 'premium',
-  max_products_per_sync: 100,
+  max_products_per_sync: 1000,
   post_interval_minutes: 360,
   text_engine: 'openrouter',
   ollama_model: 'qwen2.5:7b',
@@ -131,7 +131,7 @@ onMounted(load)
         </select>
       </label>
       <label class="label">Лимит синхронизации Ozon
-        <input v-model.number="form.max_products_per_sync" class="input" type="number" min="1" />
+        <input v-model.number="form.max_products_per_sync" class="input" type="number" min="1" max="1000" />
       </label>
       <label class="label">Интервал автопостинга, минут
         <input v-model.number="form.post_interval_minutes" class="input" type="number" min="1" />

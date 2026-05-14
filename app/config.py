@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     app_mode: Literal["manual", "auto"] = Field("manual", alias="APP_MODE")
     post_style: Literal["info", "selling", "premium", "short", "long"] = Field("premium", alias="POST_STYLE")
     post_interval_minutes: int = Field(360, alias="POST_INTERVAL_MINUTES")
-    max_products_per_sync: int = Field(20, alias="MAX_PRODUCTS_PER_SYNC")
+    max_products_per_sync: int = Field(1000, alias="MAX_PRODUCTS_PER_SYNC")
     max_photos_per_post: int = Field(1, alias="MAX_PHOTOS_PER_POST")
     dry_run: bool = Field(False, alias="DRY_RUN")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
