@@ -698,9 +698,12 @@ class PollinationsImageStyler:
         mark_x = pad
         mark_y = y0 + max(12, bar_h // 7)
         mark_size = max(44, min(62, width // 14))
-        self._draw_bottle_mark(draw, mark_x, mark_y, gold, mark_size)
+        logo_width = self._paste_logo_if_available(image, mark_x, mark_y, mark_size, bar_h)
+        if logo_width == 0:
+            self._draw_bottle_mark(draw, mark_x, mark_y, gold, mark_size)
+            logo_width = mark_size
 
-        text_x = mark_x + mark_size + max(18, width // 54)
+        text_x = mark_x + logo_width + max(18, width // 54)
         title_y = y0 + max(20, bar_h // 4)
         subtitle_y = min(y0 + bar_h - 28, title_y + max(28, width // 30))
         draw.text((text_x, title_y), "АРОМАТ ДНЯ", fill=gold, font=title_font)
@@ -710,6 +713,33 @@ class PollinationsImageStyler:
         output = BytesIO()
         image.save(output, format="PNG", optimize=True)
         return output.getvalue()
+
+    def _paste_logo_if_available(self, image: Image.Image, x: int, y: int, size: int, bar_h: int) -> int:
+        logo_path = Path("data/styled_images/logo.png")
+        if not logo_path.exists():
+            return 0
+        try:
+            logo = Image.open(logo_path).convert("RGBA")
+        except OSError:
+            return 0
+
+        max_h = max(42, int(bar_h * 0.72))
+        max_w = max(size, int(max_h * 1.35))
+        logo.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
+        y = y + max(0, (max_h - logo.height) // 2)
+
+        plate_pad = max(5, size // 9)
+        plate = Image.new("RGBA", (logo.width + plate_pad * 2, logo.height + plate_pad * 2), (255, 255, 255, 18))
+        plate_draw = ImageDraw.Draw(plate)
+        plate_draw.rounded_rectangle(
+            (0, 0, plate.width - 1, plate.height - 1),
+            radius=max(6, plate.height // 10),
+            outline=(224, 191, 112, 80),
+            fill=(255, 255, 255, 14),
+        )
+        plate.paste(logo, (plate_pad, plate_pad), logo)
+        image.alpha_composite(plate, (x, y))
+        return plate.width
 
     def _remove_generated_corner_branding(self, image: Image.Image) -> Image.Image:
         width, height = image.size
