@@ -172,6 +172,174 @@ tbody tr:hover td { background: rgba(255, 255, 255, .025); }
   transition: width .35s ease;
 }
 .empty { padding: 28px; text-align: center; color: var(--muted); }
+.empty.compact { padding: 18px; }
+.product-hero {
+  display: grid;
+  grid-template-columns: minmax(280px, 430px) minmax(0, 1fr);
+  gap: 22px;
+  padding: 18px;
+  overflow: hidden;
+}
+.product-media {
+  position: relative;
+  min-height: 520px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #090b11;
+  border: 1px solid var(--line);
+}
+.product-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.product-media-empty {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.media-badges {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.media-badges span {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: rgba(10, 13, 20, .82);
+  border: 1px solid rgba(223, 191, 120, .3);
+  color: var(--gold-2);
+  font-size: 12px;
+  font-weight: 800;
+}
+.media-badges span.ok { color: var(--green); }
+.product-summary {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  padding: 8px 4px;
+}
+.product-summary h1 {
+  max-width: 1050px;
+  font-size: 42px;
+}
+.product-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.product-stats div {
+  border: 1px solid var(--line);
+  background: rgba(10, 13, 20, .54);
+  border-radius: 8px;
+  padding: 14px;
+}
+.product-stats span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+.product-stats b {
+  display: block;
+  margin-top: 8px;
+  font-size: 22px;
+}
+.product-actions {
+  align-items: stretch;
+}
+.status-line {
+  border: 1px solid rgba(223, 191, 120, .25);
+  background: rgba(223, 191, 120, .08);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--gold-2);
+}
+.product-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, .72fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+.telegram-preview {
+  max-width: 620px;
+  overflow: hidden;
+  border: 1px solid #28324c;
+  border-radius: 8px;
+  background: #20263a;
+}
+.telegram-preview img {
+  width: 100%;
+  max-height: 560px;
+  object-fit: cover;
+  display: block;
+}
+.telegram-text {
+  white-space: pre-wrap;
+  padding: 18px;
+  color: #f7efe5;
+  line-height: 1.45;
+}
+.telegram-order {
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  border-top: 1px solid #30405f;
+  background: #07111f;
+  color: #fff;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.thumb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+.thumb-grid img {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.draft-mini {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: rgba(10, 13, 20, .48);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.draft-mini div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.draft-mini span {
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 800;
+}
+.draft-mini p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.35;
+}
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -270,6 +438,9 @@ button:disabled {
   .sidebar { position: static; height: auto; }
   .side-note { position: static; margin-top: 18px; }
   .grid, .two { grid-template-columns: 1fr; }
+  .product-hero, .product-layout, .product-stats { grid-template-columns: 1fr; }
+  .product-media { min-height: 380px; }
+  .product-summary h1 { font-size: 31px; }
   .calendar-grid { grid-template-columns: 1fr; }
   .calendar-day { min-height: auto; }
   .content { padding: 18px; }

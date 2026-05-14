@@ -155,9 +155,17 @@ class Repository:
         self.session.commit()
         return draft
 
-    def mark_published(self, product: Product, draft: Draft) -> None:
+    def mark_published(self, product: Product, draft: Draft, telegram_message_id: int | None = None) -> None:
         product.is_published = True
         draft.status = "published"
+        if telegram_message_id is not None:
+            draft.telegram_message_id = telegram_message_id
+        self.session.commit()
+
+    def reset_product_publication(self, product: Product, reason: str = "pending") -> None:
+        product.is_published = False
+        for draft in self.session.scalars(select(Draft).where(Draft.product_id == product.id, Draft.status == "published")):
+            draft.status = reason
         self.session.commit()
 
     def reject_draft(self, draft: Draft) -> None:

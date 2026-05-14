@@ -4,13 +4,14 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import shlex
 import subprocess
 from io import BytesIO
 from pathlib import Path
 
 import httpx
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from huggingface_hub import InferenceClient
 
 from app.config import Settings
@@ -501,6 +502,7 @@ class PollinationsImageStyler:
             "Content-Type": "application/json",
         }
         image_bytes = await self._request_image_generation(headers, payload)
+        image_bytes = self._apply_aromat_day_overlay(image_bytes, product)
         output_path.write_bytes(image_bytes)
         return str(output_path)
 
@@ -621,3 +623,94 @@ class PollinationsImageStyler:
             "minimal clean cosmetic advertising composition, no text, no watermark. "
             f"Product context: {brand} {name}."
         )
+
+    def _apply_aromat_day_overlay(self, image_bytes: bytes, product: Product) -> bytes:
+        image = Image.open(BytesIO(image_bytes)).convert("RGBA")
+        width, height = image.size
+        overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+
+        gold = (224, 191, 112, 255)
+        cream = (250, 244, 232, 255)
+        dark = (8, 10, 16, 206)
+        line = (224, 191, 112, 120)
+
+        title_font = self._font(max(24, width // 30), bold=True)
+        small_font = self._font(max(14, width // 58))
+        chip_font = self._font(max(13, width // 62), bold=True)
+
+        pad = max(18, width // 34)
+        bar_h = max(96, height // 9)
+        y0 = height - bar_h
+        draw.rectangle((0, y0, width, height), fill=dark)
+        draw.line((0, y0, width, y0), fill=line, width=max(1, width // 650))
+
+        mark_x = pad
+        mark_y = y0 + bar_h // 2 - 24
+        self._draw_bottle_mark(draw, mark_x, mark_y, gold)
+        draw.text((mark_x + 62, y0 + 22), "АРОМАТ ДНЯ", fill=gold, font=title_font)
+        draw.text((mark_x + 62, y0 + 58), "premium fragrance edit", fill=cream, font=small_font)
+
+        chips = self._overlay_chips(product)
+        chip_x = pad
+        chip_y = pad
+        for label in chips:
+            text_box = draw.textbbox((0, 0), label, font=chip_font)
+            chip_w = text_box[2] - text_box[0] + 28
+            chip_h = text_box[3] - text_box[1] + 16
+            draw.rounded_rectangle(
+                (chip_x, chip_y, chip_x + chip_w, chip_y + chip_h),
+                radius=chip_h // 2,
+                fill=(8, 10, 16, 178),
+                outline=(224, 191, 112, 150),
+                width=max(1, width // 900),
+            )
+            draw.text((chip_x + 14, chip_y + 7), label, fill=cream, font=chip_font)
+            chip_y += chip_h + 8
+
+        image = Image.alpha_composite(image, overlay).convert("RGB")
+        output = BytesIO()
+        image.save(output, format="PNG", optimize=True)
+        return output.getvalue()
+
+    def _draw_bottle_mark(self, draw: ImageDraw.ImageDraw, x: int, y: int, color: tuple[int, int, int, int]) -> None:
+        cx = x + 24
+        cy = y + 4
+        for idx in range(21):
+            angle = math.radians(205 + idx * 6.5)
+            x2 = cx + int(math.cos(angle) * 54)
+            y2 = cy + int(math.sin(angle) * 54)
+            draw.line((cx, cy, x2, y2), fill=(color[0], color[1], color[2], 120), width=1)
+        draw.rounded_rectangle((x + 10, y + 24, x + 54, y + 74), radius=7, outline=color, width=3)
+        draw.rounded_rectangle((x + 18, y + 6, x + 46, y + 28), radius=6, outline=color, width=3)
+        draw.line((x + 18, y + 28, x + 18, y + 38), fill=color, width=3)
+        draw.line((x + 46, y + 28, x + 46, y + 38), fill=color, width=3)
+
+    def _overlay_chips(self, product: Product) -> list[str]:
+        text = " ".join(
+            value.lower()
+            for value in (product.name, product.brand, product.category, product.description)
+            if value
+        )
+        chips = ["аромат", "premium"]
+        if any(word in text for word in ("цвет", "rose", "floral", "жасмин", "роза", "пион")):
+            chips.insert(1, "floral")
+        elif any(word in text for word in ("wood", "дерев", "кожа", "amber", "амб")):
+            chips.insert(1, "warm")
+        elif any(word in text for word in ("fresh", "свеж", "citrus", "цитрус", "green")):
+            chips.insert(1, "fresh")
+        else:
+            chips.insert(1, "soft")
+        return chips[:3]
+
+    def _font(self, size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+        candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+        ]
+        for candidate in candidates:
+            try:
+                return ImageFont.truetype(candidate, size=size)
+            except OSError:
+                continue
+        return ImageFont.load_default()

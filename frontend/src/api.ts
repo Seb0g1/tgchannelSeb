@@ -2,7 +2,7 @@ import axios from 'axios'
 
 export const api = axios.create({
   baseURL: '/api',
-  timeout: 180000,
+  timeout: 600000,
   withCredentials: true,
 })
 
@@ -34,6 +34,8 @@ export type Product = {
   is_excluded: boolean
   is_published: boolean
   styled_image_path: string | null
+  styled_image_url: string | null
+  images: string[]
   created_at: string | null
   updated_at: string | null
 }

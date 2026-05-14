@@ -1,53 +1,55 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ImagePlus, Save, WandSparkles } from 'lucide-vue-next'
+import { CheckCircle2, ImagePlus, RefreshCw, RotateCcw, Save, Send, Sparkles, WandSparkles } from 'lucide-vue-next'
 import { api, type Draft, type Product } from '../api'
 
 const route = useRoute()
 const loading = ref(true)
 const saving = ref(false)
+const assembling = ref(false)
 const generatingDraft = ref(false)
 const generatingImage = ref(false)
+const checkingPublication = ref(false)
 const draftProgress = ref(0)
 const imageProgress = ref(0)
-const imageMessage = ref('')
-const draftMessage = ref('')
+const assembleProgress = ref(0)
+const statusMessage = ref('')
 const product = ref<Product | null>(null)
 const attributes = ref<Array<{ name: string; value: string }>>([])
 const drafts = ref<Draft[]>([])
 
 let draftTimer: ReturnType<typeof setInterval> | null = null
 let imageTimer: ReturnType<typeof setInterval> | null = null
+let assembleTimer: ReturnType<typeof setInterval> | null = null
 
 const productId = computed(() => Number(route.params.id))
 const form = ref({ order_url: '', is_active: true, is_excluded: false })
+const latestDraft = computed(() => drafts.value.find((item) => item.status === 'pending') || drafts.value[0])
+const sourceImage = computed(() => product.value?.images?.[0] || '')
+const premiumImage = computed(() => product.value?.styled_image_url || product.value?.styled_image_path || '')
+const heroImage = computed(() => premiumImage.value || sourceImage.value)
+const busy = computed(() => saving.value || assembling.value || generatingDraft.value || generatingImage.value || checkingPublication.value)
 
-function startProgress(target: typeof draftProgress | typeof imageProgress, timerName: 'draft' | 'image') {
-  target.value = 7
+function startProgress(target: typeof draftProgress | typeof imageProgress | typeof assembleProgress, timerName: 'draft' | 'image' | 'assemble') {
+  target.value = 8
   const timer = setInterval(() => {
-    if (target.value < 88) {
-      target.value += Math.max(1, Math.round((92 - target.value) / 9))
+    if (target.value < 92) {
+      target.value += Math.max(1, Math.round((95 - target.value) / 10))
     }
-  }, 850)
-  if (timerName === 'draft') {
-    draftTimer = timer
-  } else {
-    imageTimer = timer
-  }
+  }, 900)
+  if (timerName === 'draft') draftTimer = timer
+  if (timerName === 'image') imageTimer = timer
+  if (timerName === 'assemble') assembleTimer = timer
 }
 
-function finishProgress(target: typeof draftProgress | typeof imageProgress, timerName: 'draft' | 'image', value = 100) {
+function finishProgress(target: typeof draftProgress | typeof imageProgress | typeof assembleProgress, timerName: 'draft' | 'image' | 'assemble', value = 100) {
   target.value = value
-  const timer = timerName === 'draft' ? draftTimer : imageTimer
-  if (timer) {
-    clearInterval(timer)
-  }
-  if (timerName === 'draft') {
-    draftTimer = null
-  } else {
-    imageTimer = null
-  }
+  const timer = timerName === 'draft' ? draftTimer : timerName === 'image' ? imageTimer : assembleTimer
+  if (timer) clearInterval(timer)
+  if (timerName === 'draft') draftTimer = null
+  if (timerName === 'image') imageTimer = null
+  if (timerName === 'assemble') assembleTimer = null
 }
 
 function errorText(error: unknown) {
@@ -71,23 +73,27 @@ async function load() {
 
 async function save() {
   saving.value = true
-  await api.patch(`/products/${productId.value}`, form.value)
-  saving.value = false
-  await load()
+  try {
+    await api.patch(`/products/${productId.value}`, form.value)
+    statusMessage.value = 'Настройки товара сохранены'
+    await load()
+  } finally {
+    saving.value = false
+  }
 }
 
 async function createDraft() {
   generatingDraft.value = true
-  draftMessage.value = 'Генерирую черновик через модель...'
+  statusMessage.value = 'Пишу текст поста...'
   startProgress(draftProgress, 'draft')
   try {
     await api.post(`/products/${productId.value}/draft`)
     finishProgress(draftProgress, 'draft')
-    draftMessage.value = 'Черновик готов'
+    statusMessage.value = 'Черновик готов'
     await load()
   } catch (error) {
     finishProgress(draftProgress, 'draft', 0)
-    draftMessage.value = errorText(error)
+    statusMessage.value = errorText(error)
   } finally {
     generatingDraft.value = false
   }
@@ -95,24 +101,68 @@ async function createDraft() {
 
 async function generateImage() {
   generatingImage.value = true
-  imageMessage.value = 'Обрабатываю фото товара. При лимитах FreeTheAI попробует до 5 раз...'
+  statusMessage.value = 'Переделываю premium-картинку с логотипом Аромат дня...'
   startProgress(imageProgress, 'image')
   try {
     const { data } = await api.post(`/products/${productId.value}/premium-image`)
-    if (data.status === 'failed') {
-      finishProgress(imageProgress, 'image', 0)
-    } else {
-      finishProgress(imageProgress, 'image')
-    }
-    imageMessage.value = data.message || data.status
-    if (data.product) {
-      product.value = data.product
-    }
+    finishProgress(imageProgress, 'image', data.status === 'failed' ? 0 : 100)
+    statusMessage.value = data.message || data.status
+    if (data.product) product.value = data.product
+    await load()
   } catch (error) {
     finishProgress(imageProgress, 'image', 0)
-    imageMessage.value = errorText(error)
+    statusMessage.value = errorText(error)
   } finally {
     generatingImage.value = false
+  }
+}
+
+async function assemblePost() {
+  assembling.value = true
+  statusMessage.value = 'Собираю пост: картинка + текст...'
+  startProgress(assembleProgress, 'assemble')
+  try {
+    const { data } = await api.post(`/products/${productId.value}/assemble`)
+    finishProgress(assembleProgress, 'assemble', data.image?.status === 'failed' ? 65 : 100)
+    statusMessage.value = data.image?.status === 'failed'
+      ? `Текст готов, картинка не создалась: ${data.image.message}`
+      : 'Пост собран: текст и картинка готовы'
+    await load()
+  } catch (error) {
+    finishProgress(assembleProgress, 'assemble', 0)
+    statusMessage.value = errorText(error)
+  } finally {
+    assembling.value = false
+  }
+}
+
+async function checkPublication() {
+  checkingPublication.value = true
+  statusMessage.value = 'Проверяю, есть ли пост в Telegram...'
+  try {
+    const { data } = await api.post(`/products/${productId.value}/publication-check`)
+    statusMessage.value = data.message || data.status
+    if (data.product) product.value = data.product
+    await load()
+  } catch (error) {
+    statusMessage.value = errorText(error)
+  } finally {
+    checkingPublication.value = false
+  }
+}
+
+async function resetPublication() {
+  checkingPublication.value = true
+  statusMessage.value = 'Возвращаю товар в очередь публикаций...'
+  try {
+    const { data } = await api.post(`/products/${productId.value}/publication-reset`)
+    statusMessage.value = 'Статус публикации сброшен'
+    if (data.product) product.value = data.product
+    await load()
+  } catch (error) {
+    statusMessage.value = errorText(error)
+  } finally {
+    checkingPublication.value = false
   }
 }
 
@@ -122,25 +172,88 @@ onMounted(load)
 <template>
   <div v-if="loading" class="panel empty">Открываю товар...</div>
   <template v-else-if="product">
-    <section class="page-head">
-      <div>
+    <section class="product-hero panel">
+      <div class="product-media">
+        <img v-if="heroImage" :src="heroImage" :alt="product.name">
+        <div v-else class="product-media-empty">Фото нет</div>
+        <div class="media-badges">
+          <span>{{ premiumImage ? 'premium image' : 'ozon photo' }}</span>
+          <span v-if="product.is_published" class="ok">published</span>
+          <span v-else>in queue</span>
+        </div>
+      </div>
+
+      <div class="product-summary">
         <div class="eyebrow">product #{{ product.id }}</div>
         <h1>{{ product.name }}</h1>
         <p class="muted">{{ product.offer_id }} · {{ product.sku || '-' }} · {{ product.brand || 'без бренда' }}</p>
+
+        <div class="product-stats">
+          <div><span>Цена для поста</span><b>{{ product.price || '-' }}</b></div>
+          <div><span>Остаток</span><b>{{ product.stock ?? '-' }}</b></div>
+          <div><span>Видимость</span><b>{{ product.visibility || '-' }}</b></div>
+        </div>
+
+        <div class="actions product-actions">
+          <button class="button" :disabled="busy" @click="assemblePost">
+            <Sparkles :size="18" /> {{ assembling ? 'Собираю...' : 'Собрать пост' }}
+          </button>
+          <button class="button secondary" :disabled="busy" @click="createDraft">
+            <WandSparkles :size="18" /> Текст
+          </button>
+          <button class="button secondary" :disabled="busy" @click="generateImage">
+            <ImagePlus :size="18" /> {{ premiumImage ? 'Переделать картинку' : 'Сделать картинку' }}
+          </button>
+          <button class="button secondary" :disabled="busy" @click="checkPublication">
+            <CheckCircle2 :size="18" /> Проверить Telegram
+          </button>
+          <button class="button danger" :disabled="busy" @click="resetPublication">
+            <RotateCcw :size="18" /> Сбросить публикацию
+          </button>
+        </div>
+
+        <div v-if="statusMessage" class="status-line">{{ statusMessage }}</div>
+        <div v-if="assembling" class="progress-card">
+          <div class="progress-head"><span>Генерация текста и картинки</span><b>{{ assembleProgress }}%</b></div>
+          <div class="progress-track"><span :style="{ width: `${assembleProgress}%` }" /></div>
+        </div>
+        <div v-if="generatingDraft" class="progress-card">
+          <div class="progress-head"><span>Генерация текста</span><b>{{ draftProgress }}%</b></div>
+          <div class="progress-track"><span :style="{ width: `${draftProgress}%` }" /></div>
+        </div>
+        <div v-if="generatingImage" class="progress-card">
+          <div class="progress-head"><span>Генерация картинки</span><b>{{ imageProgress }}%</b></div>
+          <div class="progress-track"><span :style="{ width: `${imageProgress}%` }" /></div>
+        </div>
       </div>
-      <button class="button" :disabled="generatingDraft || generatingImage" @click="createDraft">
-        <WandSparkles :size="18" /> {{ generatingDraft ? 'Генерирую...' : 'Создать черновик' }}
-      </button>
     </section>
 
-    <div class="two">
+    <div class="product-layout">
       <section class="stack">
         <div class="panel section">
-          <h2>Данные товара</h2>
-          <p><b>Цена:</b> {{ product.price || '-' }}</p>
-          <p><b>Остаток:</b> {{ product.stock ?? '-' }}</p>
-          <p><b>Видимость:</b> {{ product.visibility || '-' }}</p>
-          <p><b>Ozon:</b> <a v-if="product.url" class="muted" :href="product.url" target="_blank">{{ product.url }}</a><span v-else>-</span></p>
+          <div class="block-head">
+            <div>
+              <div class="eyebrow">telegram preview</div>
+              <h2>Черновик поста</h2>
+            </div>
+            <span v-if="latestDraft" class="pill gold">#{{ latestDraft.id }} · {{ latestDraft.status }}</span>
+          </div>
+          <div v-if="latestDraft" class="telegram-preview">
+            <img v-if="heroImage" :src="heroImage" :alt="product.name">
+            <div class="telegram-text">{{ latestDraft.text }}</div>
+            <button class="telegram-order">
+              <Send :size="15" /> Заказать{{ product.price ? ` · ${product.price}` : '' }}
+            </button>
+          </div>
+          <div v-else class="empty compact">Черновика пока нет. Нажмите “Собрать пост”.</div>
+        </div>
+
+        <div class="panel section">
+          <h2>Фото товара</h2>
+          <div class="thumb-grid">
+            <img v-if="premiumImage" :src="premiumImage" alt="Premium image">
+            <img v-for="image in product.images?.slice(0, 5)" :key="image" :src="image" :alt="product.name">
+          </div>
         </div>
 
         <div class="panel section">
@@ -160,38 +273,24 @@ onMounted(load)
             </label>
             <label class="switch"><input v-model="form.is_active" type="checkbox" /> товар актуален</label>
             <label class="switch"><input v-model="form.is_excluded" type="checkbox" /> исключить из очереди</label>
-            <button class="button" :disabled="saving || generatingDraft || generatingImage" @click="save">
+            <button class="button" :disabled="busy" @click="save">
               <Save :size="18" /> {{ saving ? 'Сохраняю...' : 'Сохранить' }}
             </button>
-            <button class="button secondary" type="button" :disabled="generatingDraft || generatingImage" @click="generateImage">
-              <ImagePlus :size="18" /> {{ generatingImage ? 'Делаю картинку...' : 'Premium-картинка' }}
-            </button>
-
-            <div v-if="generatingDraft || draftMessage" class="progress-card">
-              <div class="progress-head">
-                <span>{{ draftMessage || 'Генерация черновика' }}</span>
-                <b v-if="generatingDraft">{{ draftProgress }}%</b>
-              </div>
-              <div class="progress-track"><span :style="{ width: `${draftProgress}%` }" /></div>
-            </div>
-
-            <div v-if="generatingImage || imageMessage" class="progress-card">
-              <div class="progress-head">
-                <span>{{ imageMessage || 'Генерация premium-картинки' }}</span>
-                <b v-if="generatingImage">{{ imageProgress }}%</b>
-              </div>
-              <div class="progress-track"><span :style="{ width: `${imageProgress}%` }" /></div>
-            </div>
           </div>
         </div>
 
         <div class="panel section">
-          <h2>Черновики</h2>
+          <div class="block-head">
+            <div>
+              <div class="eyebrow">history</div>
+              <h2>Черновики</h2>
+            </div>
+            <button class="button secondary" :disabled="busy" @click="load"><RefreshCw :size="16" /> Обновить</button>
+          </div>
           <div v-if="!drafts.length" class="muted">Черновиков пока нет.</div>
-          <div v-for="draft in drafts" :key="draft.id" class="pre" style="margin-bottom: 10px">
-            #{{ draft.id }} · {{ draft.status }}
-            <br><br>
-            {{ draft.text }}
+          <div v-for="draft in drafts" :key="draft.id" class="draft-mini">
+            <div><b>#{{ draft.id }}</b><span>{{ draft.status }}</span></div>
+            <p>{{ draft.text.slice(0, 220) }}{{ draft.text.length > 220 ? '...' : '' }}</p>
           </div>
         </div>
       </section>

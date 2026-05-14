@@ -11,7 +11,7 @@ from collections.abc import Callable
 
 import httpx
 from sqlalchemy.orm import Session
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Message
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import Application
@@ -243,6 +243,7 @@ class PostService:
             text = self._prepare_telegram_html(repo, public_text)
             order_markup = self._order_markup(product)
 
+        sent_message_id: int | None = None
         if self.settings.dry_run:
             await app.bot.send_message(self.settings.telegram_owner_id, f"DRY_RUN: пост не отправлен в канал.\n\n{draft.text}")
         elif len(images) > 1 and self.settings.max_photos_per_post > 1 and not self._has_local_image(images):
@@ -252,34 +253,60 @@ class PostService:
                 for index, url in enumerate(images)
             ]
             try:
-                await app.bot.send_media_group(self.settings.telegram_channel_id, media[: self.settings.max_photos_per_post])
+                sent_group = await app.bot.send_media_group(
+                    self.settings.telegram_channel_id,
+                    media[: self.settings.max_photos_per_post],
+                )
+                if sent_group:
+                    sent_message_id = sent_group[0].message_id
                 if tail:
-                    await self._send_long_text(app, self.settings.telegram_channel_id, tail, order_markup, parse_html=True)
+                    sent_tail = await self._send_long_text(
+                        app,
+                        self.settings.telegram_channel_id,
+                        tail,
+                        order_markup,
+                        parse_html=True,
+                    )
+                    sent_message_id = sent_message_id or (sent_tail.message_id if sent_tail else None)
                 elif order_markup:
-                    await self._send_long_text(app, self.settings.telegram_channel_id, "Заказать можно по кнопке ниже.", order_markup, parse_html=True)
+                    sent_tail = await self._send_long_text(
+                        app,
+                        self.settings.telegram_channel_id,
+                        "Заказать можно по кнопке ниже.",
+                        order_markup,
+                        parse_html=True,
+                    )
+                    sent_message_id = sent_message_id or (sent_tail.message_id if sent_tail else None)
             except BadRequest as exc:
                 logger.warning("Telegram could not fetch media group URLs, falling back to first image upload: %s", exc)
                 sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption, order_markup, parse_html=True)
                 if sent:
-                    await self._send_long_text(app, self.settings.telegram_channel_id, tail, parse_html=True)
+                    sent_message_id = sent.message_id
+                    sent_tail = await self._send_long_text(app, self.settings.telegram_channel_id, tail, parse_html=True)
+                    sent_message_id = sent_message_id or (sent_tail.message_id if sent_tail else None)
                 else:
-                    await self._send_long_text(app, self.settings.telegram_channel_id, text, order_markup, parse_html=True)
+                    sent_text = await self._send_long_text(app, self.settings.telegram_channel_id, text, order_markup, parse_html=True)
+                    sent_message_id = sent_text.message_id if sent_text else None
         elif images:
             caption, tail = self._split_caption(text)
             sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption, order_markup, parse_html=True)
             if sent:
-                await self._send_long_text(app, self.settings.telegram_channel_id, tail, parse_html=True)
+                sent_message_id = sent.message_id
+                sent_tail = await self._send_long_text(app, self.settings.telegram_channel_id, tail, parse_html=True)
+                sent_message_id = sent_message_id or (sent_tail.message_id if sent_tail else None)
             else:
-                await self._send_long_text(app, self.settings.telegram_channel_id, text, order_markup, parse_html=True)
+                sent_text = await self._send_long_text(app, self.settings.telegram_channel_id, text, order_markup, parse_html=True)
+                sent_message_id = sent_text.message_id if sent_text else None
         else:
-            await self._send_long_text(app, self.settings.telegram_channel_id, text, order_markup, parse_html=True)
+            sent_text = await self._send_long_text(app, self.settings.telegram_channel_id, text, order_markup, parse_html=True)
+            sent_message_id = sent_text.message_id if sent_text else None
 
         with self.session_factory() as session:
             repo = Repository(session)
             draft = repo.get_draft(draft_id)
             product = repo.get_product(draft.product_id) if draft else None
             if draft and product:
-                repo.mark_published(product, draft)
+                repo.mark_published(product, draft, sent_message_id)
         await app.bot.send_message(self.settings.telegram_owner_id, f"Опубликовано: черновик #{draft_id}")
 
     async def process_scheduled_posts(self, app: Application) -> None:
@@ -509,8 +536,9 @@ class PostService:
         text: str,
         reply_markup: InlineKeyboardMarkup | None = None,
         parse_html: bool = False,
-    ) -> None:
+    ) -> Message | None:
         text = text.strip()
+        first_sent: Message | None = None
         first = True
         while text:
             chunk = text[:4096]
@@ -518,14 +546,16 @@ class PostService:
                 split_at = chunk.rfind("\n")
                 if split_at > 1000:
                     chunk = chunk[:split_at]
-            await app.bot.send_message(
+            sent = await app.bot.send_message(
                 chat_id,
                 chunk.strip(),
                 reply_markup=reply_markup if first else None,
                 parse_mode=ParseMode.HTML if parse_html else None,
             )
+            first_sent = first_sent or sent
             first = False
             text = text[len(chunk) :].strip()
+        return first_sent
 
     async def _send_photo_safely(
         self,
@@ -535,51 +565,51 @@ class PostService:
         caption: str,
         reply_markup: InlineKeyboardMarkup | None = None,
         parse_html: bool = False,
-    ) -> bool:
+    ) -> Message | None:
         local_path = Path(photo_url)
         if local_path.exists() and local_path.is_file():
             try:
                 with local_path.open("rb") as image_file:
-                    await app.bot.send_photo(
+                    sent = await app.bot.send_photo(
                         chat_id=chat_id,
                         photo=image_file,
                         caption=caption,
                         reply_markup=reply_markup,
                         parse_mode=ParseMode.HTML if parse_html else None,
                     )
-                return True
+                return sent
             except TelegramError as exc:
                 logger.warning("Telegram local photo upload failed: %s", exc)
-                return False
+                return None
 
         try:
-            await app.bot.send_photo(
+            sent = await app.bot.send_photo(
                 chat_id=chat_id,
                 photo=photo_url,
                 caption=caption,
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.HTML if parse_html else None,
             )
-            return True
+            return sent
         except BadRequest as exc:
             logger.warning("Telegram could not fetch photo URL, trying manual upload: %s", exc)
 
         image = await self._download_image(photo_url)
         if image is None:
-            return False
+            return None
 
         try:
-            await app.bot.send_photo(
+            sent = await app.bot.send_photo(
                 chat_id=chat_id,
                 photo=image,
                 caption=caption,
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.HTML if parse_html else None,
             )
-            return True
+            return sent
         except TelegramError as exc:
             logger.warning("Telegram photo upload fallback failed: %s", exc)
-            return False
+            return None
 
     async def _download_image(self, url: str) -> BytesIO | None:
         headers = {

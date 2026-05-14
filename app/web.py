@@ -143,6 +143,12 @@ def require_admin(
 
 
 def product_payload(product: Product) -> dict:
+    try:
+        images = json.loads(product.images_json or "[]")
+    except json.JSONDecodeError:
+        images = []
+    if not isinstance(images, list):
+        images = []
     return {
         "id": product.id,
         "offer_id": product.offer_id,
@@ -161,6 +167,8 @@ def product_payload(product: Product) -> dict:
         "is_excluded": product.is_excluded,
         "is_published": product.is_published,
         "styled_image_path": product.styled_image_path,
+        "styled_image_url": f"/styled-images/{Path(product.styled_image_path).name}" if product.styled_image_path else None,
+        "images": [item for item in images if isinstance(item, str)],
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
     }
@@ -449,6 +457,78 @@ def create_web_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="Draft was not created")
         return draft_payload(draft)
 
+    @app.post("/api/products/{product_id}/assemble")
+    async def assemble_product_post(product_id: int, _: str = Depends(require_admin)):
+        image_result = await generate_premium_image(product_id, _)
+        draft = await post_service.create_draft_for_product(product_id)
+        if draft is None:
+            raise HTTPException(status_code=400, detail="Draft was not created")
+        with session_factory() as session:
+            repo = Repository(session)
+            product = repo.get_product(product_id)
+        return {
+            "status": "ready",
+            "message": "Post text and premium image are ready.",
+            "image": image_result,
+            "draft": draft_payload(draft),
+            "product": product_payload(product) if product else None,
+        }
+
+    @app.post("/api/products/{product_id}/publication-reset")
+    async def reset_product_publication(product_id: int, _: str = Depends(require_admin)):
+        with session_factory() as session:
+            repo = Repository(session)
+            product = repo.get_product(product_id)
+            if product is None:
+                raise HTTPException(status_code=404, detail="Product not found")
+            repo.reset_product_publication(product, "deleted")
+            return {"status": "reset", "product": product_payload(product)}
+
+    @app.post("/api/products/{product_id}/publication-check")
+    async def check_product_publication(product_id: int, _: str = Depends(require_admin)):
+        with session_factory() as session:
+            repo = Repository(session)
+            product = repo.get_product(product_id)
+            if product is None:
+                raise HTTPException(status_code=404, detail="Product not found")
+            drafts = [draft for draft in repo.list_drafts("published", limit=200) if draft.product_id == product.id]
+
+        message_ids = [draft.telegram_message_id for draft in drafts if draft.telegram_message_id]
+        if not message_ids:
+            return {
+                "status": "unknown",
+                "message": "No Telegram message id saved for this product. Use manual reset if the post was deleted.",
+                "product": product_payload(product),
+            }
+
+        channel = settings.telegram_channel_id.lstrip("@")
+        checked: list[dict[str, object]] = []
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            for message_id in message_ids:
+                url = f"https://t.me/{channel}/{message_id}?embed=1"
+                response = await client.get(url)
+                body = response.text.lower()
+                exists = response.status_code == 200 and "tgme_widget_message_error" not in body and "message not found" not in body
+                checked.append({"message_id": message_id, "exists": exists, "status_code": response.status_code})
+
+        if any(item["exists"] for item in checked):
+            return {"status": "exists", "message": "Telegram post exists.", "checked": checked, "product": product_payload(product)}
+
+        with session_factory() as session:
+            repo = Repository(session)
+            fresh_product = repo.get_product(product_id)
+            if fresh_product:
+                repo.reset_product_publication(fresh_product, "deleted")
+                product_data = product_payload(fresh_product)
+            else:
+                product_data = product_payload(product)
+        return {
+            "status": "deleted",
+            "message": "Telegram post was not found. Product was returned to publication queue.",
+            "checked": checked,
+            "product": product_data,
+        }
+
     @app.get("/api/drafts")
     async def drafts(status_filter: str = "pending", page: int = 1, limit: int = 30, _: str = Depends(require_admin)):
         page = max(1, page)
@@ -672,6 +752,10 @@ def create_web_app() -> FastAPI:
             repo = Repository(session)
             ok = repo.delete_premium_emoji(emoji_id)
         return {"ok": ok}
+
+    styled_images = Path("data/styled_images")
+    if styled_images.exists():
+        app.mount("/styled-images", StaticFiles(directory=styled_images), name="styled-images")
 
     frontend_dist = Path("frontend/dist")
     if frontend_dist.exists():
