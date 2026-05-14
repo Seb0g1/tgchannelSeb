@@ -1,20 +1,59 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { WandSparkles } from 'lucide-vue-next'
+import { ImagePlus, Save, WandSparkles } from 'lucide-vue-next'
 import { api, type Draft, type Product } from '../api'
 
 const route = useRoute()
 const loading = ref(true)
 const saving = ref(false)
-const generating = ref(false)
+const generatingDraft = ref(false)
+const generatingImage = ref(false)
+const draftProgress = ref(0)
+const imageProgress = ref(0)
 const imageMessage = ref('')
+const draftMessage = ref('')
 const product = ref<Product | null>(null)
 const attributes = ref<Array<{ name: string; value: string }>>([])
 const drafts = ref<Draft[]>([])
 
+let draftTimer: ReturnType<typeof setInterval> | null = null
+let imageTimer: ReturnType<typeof setInterval> | null = null
+
 const productId = computed(() => Number(route.params.id))
 const form = ref({ order_url: '', is_active: true, is_excluded: false })
+
+function startProgress(target: typeof draftProgress | typeof imageProgress, timerName: 'draft' | 'image') {
+  target.value = 7
+  const timer = setInterval(() => {
+    if (target.value < 88) {
+      target.value += Math.max(1, Math.round((92 - target.value) / 9))
+    }
+  }, 850)
+  if (timerName === 'draft') {
+    draftTimer = timer
+  } else {
+    imageTimer = timer
+  }
+}
+
+function finishProgress(target: typeof draftProgress | typeof imageProgress, timerName: 'draft' | 'image', value = 100) {
+  target.value = value
+  const timer = timerName === 'draft' ? draftTimer : imageTimer
+  if (timer) {
+    clearInterval(timer)
+  }
+  if (timerName === 'draft') {
+    draftTimer = null
+  } else {
+    imageTimer = null
+  }
+}
+
+function errorText(error: unknown) {
+  const candidate = error as { response?: { data?: { detail?: string; message?: string } }; message?: string }
+  return candidate.response?.data?.detail || candidate.response?.data?.message || candidate.message || 'Операция завершилась ошибкой'
+}
 
 async function load() {
   loading.value = true
@@ -38,18 +77,42 @@ async function save() {
 }
 
 async function createDraft() {
-  generating.value = true
-  await api.post(`/products/${productId.value}/draft`)
-  generating.value = false
-  await load()
+  generatingDraft.value = true
+  draftMessage.value = 'Генерирую черновик через модель...'
+  startProgress(draftProgress, 'draft')
+  try {
+    await api.post(`/products/${productId.value}/draft`)
+    finishProgress(draftProgress, 'draft')
+    draftMessage.value = 'Черновик готов'
+    await load()
+  } catch (error) {
+    finishProgress(draftProgress, 'draft', 0)
+    draftMessage.value = errorText(error)
+  } finally {
+    generatingDraft.value = false
+  }
 }
 
 async function generateImage() {
-  imageMessage.value = ''
-  const { data } = await api.post(`/products/${productId.value}/premium-image`)
-  imageMessage.value = data.message || data.status
-  if (data.product) {
-    product.value = data.product
+  generatingImage.value = true
+  imageMessage.value = 'Обрабатываю фото товара. При лимитах FreeTheAI попробует до 5 раз...'
+  startProgress(imageProgress, 'image')
+  try {
+    const { data } = await api.post(`/products/${productId.value}/premium-image`)
+    if (data.status === 'failed') {
+      finishProgress(imageProgress, 'image', 0)
+    } else {
+      finishProgress(imageProgress, 'image')
+    }
+    imageMessage.value = data.message || data.status
+    if (data.product) {
+      product.value = data.product
+    }
+  } catch (error) {
+    finishProgress(imageProgress, 'image', 0)
+    imageMessage.value = errorText(error)
+  } finally {
+    generatingImage.value = false
   }
 }
 
@@ -65,8 +128,8 @@ onMounted(load)
         <h1>{{ product.name }}</h1>
         <p class="muted">{{ product.offer_id }} · {{ product.sku || '-' }} · {{ product.brand || 'без бренда' }}</p>
       </div>
-      <button class="button" :disabled="generating" @click="createDraft">
-        <WandSparkles :size="18" /> {{ generating ? 'Генерирую...' : 'Создать черновик' }}
+      <button class="button" :disabled="generatingDraft || generatingImage" @click="createDraft">
+        <WandSparkles :size="18" /> {{ generatingDraft ? 'Генерирую...' : 'Создать черновик' }}
       </button>
     </section>
 
@@ -97,9 +160,28 @@ onMounted(load)
             </label>
             <label class="switch"><input v-model="form.is_active" type="checkbox" /> товар актуален</label>
             <label class="switch"><input v-model="form.is_excluded" type="checkbox" /> исключить из очереди</label>
-            <button class="button" :disabled="saving" @click="save">{{ saving ? 'Сохраняю...' : 'Сохранить' }}</button>
-            <button class="button secondary" type="button" @click="generateImage">Premium-картинка</button>
-            <span v-if="imageMessage" class="pill gold">{{ imageMessage }}</span>
+            <button class="button" :disabled="saving || generatingDraft || generatingImage" @click="save">
+              <Save :size="18" /> {{ saving ? 'Сохраняю...' : 'Сохранить' }}
+            </button>
+            <button class="button secondary" type="button" :disabled="generatingDraft || generatingImage" @click="generateImage">
+              <ImagePlus :size="18" /> {{ generatingImage ? 'Делаю картинку...' : 'Premium-картинка' }}
+            </button>
+
+            <div v-if="generatingDraft || draftMessage" class="progress-card">
+              <div class="progress-head">
+                <span>{{ draftMessage || 'Генерация черновика' }}</span>
+                <b v-if="generatingDraft">{{ draftProgress }}%</b>
+              </div>
+              <div class="progress-track"><span :style="{ width: `${draftProgress}%` }" /></div>
+            </div>
+
+            <div v-if="generatingImage || imageMessage" class="progress-card">
+              <div class="progress-head">
+                <span>{{ imageMessage || 'Генерация premium-картинки' }}</span>
+                <b v-if="generatingImage">{{ imageProgress }}%</b>
+              </div>
+              <div class="progress-track"><span :style="{ width: `${imageProgress}%` }" /></div>
+            </div>
           </div>
         </div>
 

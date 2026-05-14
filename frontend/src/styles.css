@@ -140,6 +140,37 @@ tbody tr:hover td { background: rgba(255, 255, 255, .025); }
   padding: 14px;
   color: #e9e2d8;
 }
+.progress-card {
+  display: grid;
+  gap: 9px;
+  border: 1px solid rgba(223, 191, 120, .24);
+  background: rgba(223, 191, 120, .07);
+  border-radius: 8px;
+  padding: 12px;
+}
+.progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.progress-head b { color: var(--gold); }
+.progress-track {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(10, 13, 20, .86);
+}
+.progress-track span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--gold), var(--rose));
+  transition: width .35s ease;
+}
 .empty { padding: 28px; text-align: center; color: var(--muted); }
 .calendar-grid {
   display: grid;

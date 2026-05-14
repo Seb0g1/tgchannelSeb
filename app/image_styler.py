@@ -308,26 +308,73 @@ class FreeTheAIImageStyler:
             "Content-Type": "application/json",
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=self.settings.freetheai_timeout_seconds) as client:
-                response = await client.post(
-                    f"{self.settings.freetheai_base_url.rstrip('/')}/images/edits",
-                    headers=headers,
-                    json=payload,
-                )
-                response.raise_for_status()
-                image_bytes = await self._extract_image_bytes(client, response.json())
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text[-1600:] if exc.response is not None else str(exc)
-            raise ImageGenerationError(f"FreeTheAI returned HTTP {exc.response.status_code}: {detail}") from exc
-        except httpx.HTTPError as exc:
-            raise ImageGenerationError(f"FreeTheAI request failed: {exc}") from exc
-        except Exception as exc:
-            logger.exception("FreeTheAI image edit failed")
-            raise ImageGenerationError(str(exc)) from exc
-
+        image_bytes = await self._request_image_edit(headers, payload)
         output_path.write_bytes(image_bytes)
         return str(output_path)
+
+    async def _request_image_edit(self, headers: dict[str, str], payload: dict) -> bytes:
+        url = f"{self.settings.freetheai_base_url.rstrip('/')}/images/edits"
+        retry_statuses = {429, 500, 502, 503, 504}
+        max_attempts = 5
+
+        async with httpx.AsyncClient(timeout=self.settings.freetheai_timeout_seconds) as client:
+            last_error = "unknown error"
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = await client.post(url, headers=headers, json=payload)
+                    if response.status_code in retry_statuses:
+                        last_error = response.text[-1600:]
+                        if attempt < max_attempts:
+                            delay = self._retry_delay(response, attempt)
+                            logger.warning(
+                                "FreeTheAI temporary error %s on attempt %s/%s. Retrying in %.1fs: %s",
+                                response.status_code,
+                                attempt,
+                                max_attempts,
+                                delay,
+                                last_error,
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        raise ImageGenerationError(
+                            f"FreeTheAI did not return an image after {max_attempts} attempts "
+                            f"(last HTTP {response.status_code}): {last_error}"
+                        )
+                    response.raise_for_status()
+                    return await self._extract_image_bytes(client, response.json())
+                except httpx.HTTPStatusError as exc:
+                    detail = exc.response.text[-1600:] if exc.response is not None else str(exc)
+                    raise ImageGenerationError(f"FreeTheAI returned HTTP {exc.response.status_code}: {detail}") from exc
+                except httpx.HTTPError as exc:
+                    last_error = str(exc)
+                    if attempt < max_attempts:
+                        delay = min(30.0, 3.0 * attempt)
+                        logger.warning(
+                            "FreeTheAI request failed on attempt %s/%s. Retrying in %.1fs: %s",
+                            attempt,
+                            max_attempts,
+                            delay,
+                            exc,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise ImageGenerationError(f"FreeTheAI request failed after {max_attempts} attempts: {exc}") from exc
+                except ImageGenerationError:
+                    raise
+                except Exception as exc:
+                    logger.exception("FreeTheAI image edit failed")
+                    raise ImageGenerationError(str(exc)) from exc
+
+        raise ImageGenerationError(f"FreeTheAI did not return an image after {max_attempts} attempts: {last_error}")
+
+    def _retry_delay(self, response: httpx.Response, attempt: int) -> float:
+        retry_after = response.headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(60.0, max(1.0, float(retry_after)))
+            except ValueError:
+                pass
+        return min(30.0, 4.0 * attempt)
 
     async def _download_source_image(self, product: Product) -> BytesIO | None:
         source_url = self._source_image_url(product)
