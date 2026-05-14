@@ -10,12 +10,13 @@ const modelOptions = ref({
   pollinations_text: [] as string[],
   pollinations_image: [] as string[],
 })
+
 const form = ref({
   app_mode: 'manual',
   post_style: 'premium',
   max_products_per_sync: 100,
   post_interval_minutes: 360,
-  text_engine: 'ollama',
+  text_engine: 'pollinations',
   ollama_model: 'qwen2.5:7b',
   ollama_timeout_seconds: 300,
   ollama_num_predict: 650,
@@ -24,7 +25,7 @@ const form = ref({
   freetheai_text_model: 'bbl/gpt-4.1',
   freetheai_text_timeout_seconds: 180,
   freetheai_text_max_tokens: 900,
-  image_engine: 'none',
+  image_engine: 'pollinations',
   comfyui_base_url: 'http://127.0.0.1:8188',
   hf_image_model: 'stabilityai/stable-diffusion-xl-refiner-1.0',
   hf_image_provider: 'auto',
@@ -57,7 +58,13 @@ const form = ref({
 
 async function load() {
   const { data } = await api.get('/settings')
-  form.value = data
+  form.value = {
+    ...form.value,
+    ...data,
+    text_engine: 'pollinations',
+    image_engine: 'pollinations',
+  }
+
   try {
     const models = await api.get('/model-options')
     modelOptions.value = models.data
@@ -67,12 +74,15 @@ async function load() {
       pollinations_image: ['kontext', 'nanobanana', 'seedream5', 'gptimage', 'gpt-image-2', 'flux', 'zimage', 'klein'],
     }
   }
+
   loading.value = false
 }
 
 async function save() {
   saving.value = true
   saved.value = false
+  form.value.text_engine = 'pollinations'
+  form.value.image_engine = 'pollinations'
   await api.patch('/settings', form.value)
   saving.value = false
   saved.value = true
@@ -86,7 +96,7 @@ onMounted(load)
     <div>
       <div class="eyebrow">configuration</div>
       <h1>Настройки</h1>
-      <p class="muted">Публикации, генерация текста, Ozon-синхронизация и premium-картинки.</p>
+      <p class="muted">Публикации, Ozon-синхронизация и генерация через Pollinations.</p>
     </div>
   </section>
 
@@ -119,58 +129,27 @@ onMounted(load)
     <div class="panel">
       <div class="block-head">
         <div>
-          <div class="eyebrow">text generation</div>
+          <div class="eyebrow">pollinations</div>
           <h2><Sparkles :size="20" /> Тексты постов</h2>
         </div>
       </div>
       <div class="form-grid">
-        <label class="label">Генератор текста
-          <select v-model="form.text_engine" class="select">
-            <option value="ollama">ollama</option>
-            <option value="freetheai">freetheai</option>
-            <option value="pollinations">pollinations</option>
-          </select>
-        </label>
-        <label class="label">Модель Ollama
-          <input v-model="form.ollama_model" class="input" />
-        </label>
-        <label class="label">Таймаут Ollama, секунд
-          <input v-model.number="form.ollama_timeout_seconds" class="input" type="number" min="30" />
-        </label>
-        <label class="label">Длина ответа Ollama
-          <input v-model.number="form.ollama_num_predict" class="input" type="number" min="100" />
-        </label>
-        <label class="label">FreeTheAI API key
-          <input v-model="form.freetheai_api_key" class="input" type="password" autocomplete="off" />
-        </label>
-        <label class="label">FreeTheAI base URL
-          <input v-model="form.freetheai_base_url" class="input" />
-        </label>
-        <label class="label">FreeTheAI text model
-          <input v-model="form.freetheai_text_model" class="input" />
-        </label>
-        <label class="label">FreeTheAI text timeout, seconds
-          <input v-model.number="form.freetheai_text_timeout_seconds" class="input" type="number" min="30" />
-        </label>
-        <label class="label">FreeTheAI max tokens
-          <input v-model.number="form.freetheai_text_max_tokens" class="input" type="number" min="200" />
-        </label>
-        <label class="label">Pollinations API key
+        <label class="label">API key
           <input v-model="form.pollinations_api_key" class="input" type="password" autocomplete="off" />
         </label>
-        <label class="label">Pollinations base URL
+        <label class="label">Base URL
           <input v-model="form.pollinations_base_url" class="input" />
         </label>
-        <label class="label">Pollinations text model
+        <label class="label">Модель текста
           <input v-model="form.pollinations_text_model" class="input" list="pollinations-text-models" />
           <datalist id="pollinations-text-models">
             <option v-for="model in modelOptions.pollinations_text" :key="model" :value="model" />
           </datalist>
         </label>
-        <label class="label">Pollinations text timeout, seconds
+        <label class="label">Timeout текста, секунд
           <input v-model.number="form.pollinations_text_timeout_seconds" class="input" type="number" min="30" />
         </label>
-        <label class="label">Pollinations max tokens
+        <label class="label">Максимум токенов
           <input v-model.number="form.pollinations_text_max_tokens" class="input" type="number" min="200" />
         </label>
       </div>
@@ -179,40 +158,24 @@ onMounted(load)
     <div class="panel">
       <div class="block-head">
         <div>
-          <div class="eyebrow">image generation</div>
+          <div class="eyebrow">pollinations image</div>
           <h2><Sparkles :size="20" /> Premium-картинки</h2>
         </div>
       </div>
       <div class="form-grid">
-        <label class="label">Генератор
-          <select v-model="form.image_engine" class="select">
-            <option value="none">none</option>
-            <option value="freetheai">freetheai</option>
-            <option value="pollinations">pollinations</option>
-            <option value="local_sdcpp">local_sdcpp</option>
-            <option value="huggingface">huggingface</option>
-            <option value="comfyui">comfyui</option>
-          </select>
-        </label>
         <label class="label">Режим
           <select v-model="form.image_generation_mode" class="select">
             <option value="image_to_image">image_to_image</option>
             <option value="cover">cover</option>
           </select>
         </label>
-        <label class="label">FreeTheAI image edit model
-          <input v-model="form.freetheai_image_model" class="input" />
-        </label>
-        <label class="label">FreeTheAI image timeout, seconds
-          <input v-model.number="form.freetheai_timeout_seconds" class="input" type="number" min="30" />
-        </label>
-        <label class="label">Pollinations image model
+        <label class="label">Модель картинки
           <input v-model="form.pollinations_image_model" class="input" list="pollinations-image-models" />
           <datalist id="pollinations-image-models">
             <option v-for="model in modelOptions.pollinations_image" :key="model" :value="model" />
           </datalist>
         </label>
-        <label class="label">Pollinations quality
+        <label class="label">Качество
           <select v-model="form.pollinations_image_quality" class="select">
             <option value="low">low</option>
             <option value="medium">medium</option>
@@ -220,59 +183,14 @@ onMounted(load)
             <option value="hd">hd</option>
           </select>
         </label>
-        <label class="label">Pollinations width
+        <label class="label">Ширина
           <input v-model.number="form.pollinations_image_width" class="input" type="number" min="256" step="64" />
         </label>
-        <label class="label">Pollinations height
+        <label class="label">Высота
           <input v-model.number="form.pollinations_image_height" class="input" type="number" min="256" step="64" />
         </label>
-        <label class="label">Pollinations timeout, seconds
+        <label class="label">Timeout картинки, секунд
           <input v-model.number="form.pollinations_image_timeout_seconds" class="input" type="number" min="30" />
-        </label>
-        <label class="label">Hugging Face model
-          <input v-model="form.hf_image_model" class="input" />
-        </label>
-        <label class="label">HF provider
-          <input v-model="form.hf_image_provider" class="input" placeholder="auto" />
-        </label>
-        <label class="label">Ширина HF
-          <input v-model.number="form.hf_image_width" class="input" type="number" min="256" step="64" />
-        </label>
-        <label class="label">Высота HF
-          <input v-model.number="form.hf_image_height" class="input" type="number" min="256" step="64" />
-        </label>
-        <label class="label">ComfyUI URL
-          <input v-model="form.comfyui_base_url" class="input" />
-        </label>
-        <label class="label">stable-diffusion.cpp binary
-          <input v-model="form.local_sdcpp_bin" class="input" />
-        </label>
-        <label class="label">Local GGUF model
-          <input v-model="form.local_image_model" class="input" />
-        </label>
-        <label class="label">Local width
-          <input v-model.number="form.local_image_width" class="input" type="number" min="256" step="64" />
-        </label>
-        <label class="label">Local height
-          <input v-model.number="form.local_image_height" class="input" type="number" min="256" step="64" />
-        </label>
-        <label class="label">Local steps
-          <input v-model.number="form.local_image_steps" class="input" type="number" min="1" max="60" />
-        </label>
-        <label class="label">Local strength
-          <input v-model.number="form.local_image_strength" class="input" type="number" min="0.05" max="0.95" step="0.05" />
-        </label>
-        <label class="label">Local CFG scale
-          <input v-model.number="form.local_image_cfg_scale" class="input" type="number" min="1" max="15" step="0.5" />
-        </label>
-        <label class="label">Local seed
-          <input v-model.number="form.local_image_seed" class="input" type="number" />
-        </label>
-        <label class="label">Local CPU threads
-          <input v-model.number="form.local_image_threads" class="input" type="number" min="1" max="16" />
-        </label>
-        <label class="label">Local timeout, seconds
-          <input v-model.number="form.local_image_timeout_seconds" class="input" type="number" min="60" />
         </label>
       </div>
     </div>
