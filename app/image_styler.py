@@ -288,7 +288,7 @@ class FreeTheAIImageStyler:
         self.output_dir = Path("data/styled_images")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    async def generate(self, product: Product) -> str:
+    async def generate(self, product: Product, max_attempts: int = 5) -> str:
         if not self.settings.freetheai_api_key:
             raise ImageGenerationError("FREETHEAI_API_KEY is empty. Add FreeTheAI key to .env or settings.")
 
@@ -308,14 +308,13 @@ class FreeTheAIImageStyler:
             "Content-Type": "application/json",
         }
 
-        image_bytes = await self._request_image_edit(headers, payload)
+        image_bytes = await self._request_image_edit(headers, payload, max_attempts=max_attempts)
         output_path.write_bytes(image_bytes)
         return str(output_path)
 
-    async def _request_image_edit(self, headers: dict[str, str], payload: dict) -> bytes:
+    async def _request_image_edit(self, headers: dict[str, str], payload: dict, max_attempts: int = 5) -> bytes:
         url = f"{self.settings.freetheai_base_url.rstrip('/')}/images/edits"
         retry_statuses = {429, 500, 502, 503, 504}
-        max_attempts = 5
 
         async with httpx.AsyncClient(timeout=self.settings.freetheai_timeout_seconds) as client:
             last_error = "unknown error"
@@ -324,6 +323,11 @@ class FreeTheAIImageStyler:
                     response = await client.post(url, headers=headers, json=payload)
                     if response.status_code in retry_statuses:
                         last_error = response.text[-1600:]
+                        if self._is_concurrency_limit(response, last_error) and max_attempts <= 1:
+                            raise ImageGenerationError(
+                                "FreeTheAI сейчас занят предыдущей генерацией изображения. "
+                                "Подождите 1-3 минуты и нажмите кнопку снова."
+                            )
                         if attempt < max_attempts:
                             delay = self._retry_delay(response, attempt)
                             logger.warning(
@@ -380,6 +384,16 @@ class FreeTheAIImageStyler:
         if response.status_code in {429, 500, 502, 503, 504}:
             return 60.0
         return min(30.0, 4.0 * attempt)
+
+    def _is_concurrency_limit(self, response: httpx.Response, text: str) -> bool:
+        lowered = text.lower()
+        if "concurrency" in lowered or "active request" in lowered:
+            return True
+        try:
+            error_type = ((response.json() or {}).get("error") or {}).get("type")
+        except ValueError:
+            return False
+        return error_type == "concurrency_limit_error"
 
     async def _download_source_image(self, product: Product) -> BytesIO | None:
         source_url = self._source_image_url(product)

@@ -495,7 +495,7 @@ def create_web_app() -> FastAPI:
                 )
                 styler = FreeTheAIImageStyler(dynamic_settings)
                 try:
-                    image_path = await styler.generate(product)
+                    image_path = await styler.generate(product, max_attempts=1)
                 except ImageGenerationError as exc:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
