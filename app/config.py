@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     pollinations_text_max_tokens: int = Field(900, alias="POLLINATIONS_TEXT_MAX_TOKENS")
     openrouter_api_key: str | None = Field(None, alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field("https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL")
-    openrouter_text_model: str = Field("openrouter/cypher-alpha:free", alias="OPENROUTER_TEXT_MODEL")
+    openrouter_text_model: str = Field("openrouter/free", alias="OPENROUTER_TEXT_MODEL")
     openrouter_text_timeout_seconds: int = Field(180, alias="OPENROUTER_TEXT_TIMEOUT_SECONDS")
     openrouter_text_max_tokens: int = Field(900, alias="OPENROUTER_TEXT_MAX_TOKENS")
     openrouter_site_url: str | None = Field(None, alias="OPENROUTER_SITE_URL")

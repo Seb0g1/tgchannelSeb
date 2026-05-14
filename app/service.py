@@ -26,6 +26,7 @@ from app.schemas import ProductData
 logger = logging.getLogger(__name__)
 
 PAGE_SIZE = 8
+DEAD_OPENROUTER_MODELS = {"openrouter/cypher-alpha:free"}
 
 
 class PostService:
@@ -502,10 +503,13 @@ class PostService:
             except TextGenerationError:
                 raise
         if engine == "openrouter":
+            model = self._get_str_setting("openrouter_text_model", self.settings.openrouter_text_model)
+            if model in DEAD_OPENROUTER_MODELS:
+                model = "openrouter/free"
             generator = OpenRouterTextGenerator(
                 api_key=self._get_str_setting("openrouter_api_key", self.settings.openrouter_api_key or ""),
                 base_url=self._get_str_setting("openrouter_base_url", self.settings.openrouter_base_url),
-                model=self._get_str_setting("openrouter_text_model", self.settings.openrouter_text_model),
+                model=model,
                 timeout_seconds=self._get_int_setting(
                     "openrouter_text_timeout_seconds",
                     self.settings.openrouter_text_timeout_seconds,

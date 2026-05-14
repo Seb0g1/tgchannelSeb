@@ -34,9 +34,18 @@ from app.models import Draft, PremiumEmoji, Product, make_session_factory
 from app.ozon_client import OzonClient
 from app.repository import Repository
 from app.service import PostService
+from app.llm import TextGenerationError
 
 SESSION_COOKIE = "aromat_session"
 logger = logging.getLogger(__name__)
+DEAD_OPENROUTER_MODELS = {"openrouter/cypher-alpha:free"}
+
+
+def _normalize_openrouter_model(model: str | None) -> str:
+    value = (model or "").strip()
+    if not value or value in DEAD_OPENROUTER_MODELS:
+        return "openrouter/free"
+    return value
 
 
 class ProductUpdate(BaseModel):
@@ -101,7 +110,7 @@ class AppSettingsPayload(BaseModel):
     pollinations_text_max_tokens: int = 900
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_text_model: str = "openrouter/cypher-alpha:free"
+    openrouter_text_model: str = "openrouter/free"
     openrouter_text_timeout_seconds: int = 180
     openrouter_text_max_tokens: int = 900
     openrouter_site_url: str | None = None
@@ -353,7 +362,9 @@ def create_web_app() -> FastAPI:
             ),
             "openrouter_api_key": db.get("openrouter_api_key", settings.openrouter_api_key or ""),
             "openrouter_base_url": db.get("openrouter_base_url", settings.openrouter_base_url),
-            "openrouter_text_model": db.get("openrouter_text_model", settings.openrouter_text_model),
+            "openrouter_text_model": _normalize_openrouter_model(
+                db.get("openrouter_text_model", settings.openrouter_text_model)
+            ),
             "openrouter_text_timeout_seconds": int(
                 db.get("openrouter_text_timeout_seconds", settings.openrouter_text_timeout_seconds)
             ),
@@ -383,6 +394,7 @@ def create_web_app() -> FastAPI:
     async def update_app_settings(payload: AppSettingsPayload, _: str = Depends(require_admin)):
         values = payload.model_dump()
         values["max_products_per_sync"] = min(1000, max(1, int(values["max_products_per_sync"])))
+        values["openrouter_text_model"] = _normalize_openrouter_model(str(values["openrouter_text_model"]))
         with session_factory() as session:
             repo = Repository(session)
             for key, value in values.items():
@@ -503,7 +515,10 @@ def create_web_app() -> FastAPI:
 
     @app.post("/api/products/{product_id}/draft")
     async def create_draft(product_id: int, _: str = Depends(require_admin)):
-        draft = await post_service.create_draft_for_product(product_id)
+        try:
+            draft = await post_service.create_draft_for_product(product_id)
+        except TextGenerationError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         if draft is None:
             raise HTTPException(status_code=400, detail="Draft was not created")
         return draft_payload(draft)
@@ -511,7 +526,10 @@ def create_web_app() -> FastAPI:
     @app.post("/api/products/{product_id}/assemble")
     async def assemble_product_post(product_id: int, _: str = Depends(require_admin)):
         image_result = await generate_premium_image(product_id, _)
-        draft = await post_service.create_draft_for_product(product_id)
+        try:
+            draft = await post_service.create_draft_for_product(product_id)
+        except TextGenerationError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         if draft is None:
             raise HTTPException(status_code=400, detail="Draft was not created")
         with session_factory() as session:

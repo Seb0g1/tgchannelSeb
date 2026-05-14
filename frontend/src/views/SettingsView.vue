@@ -51,7 +51,7 @@ const form = ref({
   pollinations_text_max_tokens: 900,
   openrouter_api_key: '',
   openrouter_base_url: 'https://openrouter.ai/api/v1',
-  openrouter_text_model: 'openrouter/cypher-alpha:free',
+  openrouter_text_model: 'openrouter/free',
   openrouter_text_timeout_seconds: 180,
   openrouter_text_max_tokens: 900,
   openrouter_site_url: 'https://parfum.sebog1.ru',

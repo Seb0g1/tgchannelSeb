@@ -387,6 +387,8 @@ class OpenRouterTextGenerator(PollinationsTextGenerator):
             raise TextGenerationError("OPENROUTER_API_KEY is empty. Add OpenRouter key to .env or settings.")
 
         prompt = self._build_prompt(product, style)
+        models = self._candidate_models()
+        last_error = ""
         payload = {
             "model": self.model,
             "messages": [
@@ -411,7 +413,19 @@ class OpenRouterTextGenerator(PollinationsTextGenerator):
         }
         if self.site_url:
             headers["HTTP-Referer"] = self.site_url
-        result = await self._request_chat_completion(headers, payload)
+        for model in models:
+            payload["model"] = model
+            try:
+                result = await self._request_chat_completion(headers, payload)
+                break
+            except TextGenerationError as exc:
+                last_error = str(exc)
+                if model != "openrouter/free" and self._should_fallback_to_free_router(last_error):
+                    logger.warning("OpenRouter model %s failed, trying openrouter/free: %s", model, last_error)
+                    continue
+                raise
+        else:
+            raise TextGenerationError(f"OpenRouter text failed for all models: {last_error}")
         choices = result.get("choices") or []
         if not choices:
             raise TextGenerationError(f"OpenRouter response has no choices: {result}")
@@ -419,6 +433,17 @@ class OpenRouterTextGenerator(PollinationsTextGenerator):
         if not content:
             raise TextGenerationError(f"OpenRouter response has no text content: {result}")
         return self._clean(content)
+
+    def _candidate_models(self) -> list[str]:
+        primary = (self.model or "").strip() or "openrouter/free"
+        models = [primary]
+        if primary != "openrouter/free":
+            models.append("openrouter/free")
+        return models
+
+    def _should_fallback_to_free_router(self, error: str) -> bool:
+        lowered = error.lower()
+        return "404" in lowered or "no endpoints found" in lowered or "unknown model" in lowered
 
     async def _request_chat_completion(self, headers: dict[str, str], payload: dict) -> dict:
         url = f"{self.base_url}/chat/completions"
