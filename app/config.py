@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     ozon_visibility: str = Field("VISIBLE", alias="OZON_VISIBILITY")
     image_engine: str = Field("none", alias="IMAGE_ENGINE")
     comfyui_base_url: str = Field("http://127.0.0.1:8188", alias="COMFYUI_BASE_URL")
+    hf_token: str | None = Field(None, alias="HF_TOKEN")
+    hf_image_model: str = Field("stabilityai/stable-diffusion-xl-base-1.0", alias="HF_IMAGE_MODEL")
+    hf_image_provider: str = Field("auto", alias="HF_IMAGE_PROVIDER")
+    hf_image_width: int = Field(1024, alias="HF_IMAGE_WIDTH")
+    hf_image_height: int = Field(1280, alias="HF_IMAGE_HEIGHT")
+    image_generation_mode: str = Field("cover", alias="IMAGE_GENERATION_MODE")
 
 
 @lru_cache

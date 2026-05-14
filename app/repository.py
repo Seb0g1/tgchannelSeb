@@ -186,6 +186,10 @@ class Repository:
         product.is_excluded = is_excluded
         self.session.commit()
 
+    def update_product_styled_image(self, product: Product, path: str) -> None:
+        product.styled_image_path = path
+        self.session.commit()
+
     def dashboard_counts(self) -> dict[str, int]:
         return {
             "all": int(self.session.scalar(select(func.count()).select_from(Product)) or 0),

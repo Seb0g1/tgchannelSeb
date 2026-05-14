@@ -48,6 +48,9 @@ async function generateImage() {
   imageMessage.value = ''
   const { data } = await api.post(`/products/${productId.value}/premium-image`)
   imageMessage.value = data.message || data.status
+  if (data.product) {
+    product.value = data.product
+  }
 }
 
 onMounted(load)

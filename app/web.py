@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from telegram import Bot
 
 from app.config import Settings, get_settings
+from app.image_styler import HuggingFaceImageStyler, ImageGenerationError
 from app.llm import OllamaGenerator
 from app.logging_config import setup_logging
 from app.models import Draft, PremiumEmoji, Product, make_session_factory
@@ -58,6 +59,11 @@ class AppSettingsPayload(BaseModel):
     ollama_num_predict: int
     image_engine: str = "none"
     comfyui_base_url: str = "http://127.0.0.1:8188"
+    hf_image_model: str = "stabilityai/stable-diffusion-xl-base-1.0"
+    hf_image_provider: str = "auto"
+    hf_image_width: int = 1024
+    hf_image_height: int = 1280
+    image_generation_mode: str = "cover"
 
 
 class ScheduleCreate(BaseModel):
@@ -220,6 +226,11 @@ def create_web_app() -> FastAPI:
             "ollama_num_predict": int(db.get("ollama_num_predict", settings.ollama_num_predict)),
             "image_engine": db.get("image_engine", settings.image_engine),
             "comfyui_base_url": db.get("comfyui_base_url", settings.comfyui_base_url),
+            "hf_image_model": db.get("hf_image_model", settings.hf_image_model),
+            "hf_image_provider": db.get("hf_image_provider", settings.hf_image_provider),
+            "hf_image_width": int(db.get("hf_image_width", settings.hf_image_width)),
+            "hf_image_height": int(db.get("hf_image_height", settings.hf_image_height)),
+            "image_generation_mode": db.get("image_generation_mode", settings.image_generation_mode),
         }
 
     @app.patch("/api/settings")
@@ -391,10 +402,27 @@ def create_web_app() -> FastAPI:
             if product is None:
                 raise HTTPException(status_code=404, detail="Product not found")
             engine = repo.get_setting("image_engine", settings.image_engine)
+            if engine == "huggingface":
+                dynamic_settings = settings.model_copy(
+                    update={
+                        "hf_image_model": repo.get_setting("hf_image_model", settings.hf_image_model),
+                        "hf_image_provider": repo.get_setting("hf_image_provider", settings.hf_image_provider),
+                        "hf_image_width": int(repo.get_setting("hf_image_width", str(settings.hf_image_width))),
+                        "hf_image_height": int(repo.get_setting("hf_image_height", str(settings.hf_image_height))),
+                        "image_generation_mode": repo.get_setting("image_generation_mode", settings.image_generation_mode),
+                    }
+                )
+                styler = HuggingFaceImageStyler(dynamic_settings)
+                try:
+                    image_path = await styler.generate(product)
+                except ImageGenerationError as exc:
+                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
+                repo.update_product_styled_image(product, image_path)
+                return {"status": "generated", "message": "Premium image generated.", "product": product_payload(product)}
             if engine != "comfyui":
                 return {
                     "status": "not_configured",
-                    "message": "Set image_engine=comfyui and configure ComfyUI workflow before generation.",
+                    "message": "Set image_engine=huggingface in settings before generation.",
                     "product": product_payload(product),
                 }
         return {"status": "queued", "message": "ComfyUI integration placeholder is ready for workflow wiring."}

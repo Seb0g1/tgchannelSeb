@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 from html import escape
 from io import BytesIO
+from pathlib import Path
 from collections.abc import Callable
 
 import httpx
@@ -241,7 +242,7 @@ class PostService:
 
         if self.settings.dry_run:
             await app.bot.send_message(self.settings.telegram_owner_id, f"DRY_RUN: пост не отправлен в канал.\n\n{draft.text}")
-        elif len(images) > 1 and self.settings.max_photos_per_post > 1:
+        elif len(images) > 1 and self.settings.max_photos_per_post > 1 and not self._has_local_image(images):
             caption, tail = self._split_caption(text)
             media = [
                 InputMediaPhoto(media=url, caption=caption if index == 0 else None, parse_mode=ParseMode.HTML)
@@ -377,7 +378,11 @@ class PostService:
         return rendered
 
     def _product_images(self, product: Product) -> list[str]:
-        return [url for url in self._load_json_list(product.images_json) if isinstance(url, str) and url.startswith("http")]
+        images: list[str] = []
+        if product.styled_image_path and Path(product.styled_image_path).exists():
+            images.append(product.styled_image_path)
+        images.extend(url for url in self._load_json_list(product.images_json) if isinstance(url, str) and url.startswith("http"))
+        return images
 
     def _draft_preview(self, draft: Draft, product: Product) -> str:
         return (
@@ -429,6 +434,22 @@ class PostService:
         reply_markup: InlineKeyboardMarkup | None = None,
         parse_html: bool = False,
     ) -> bool:
+        local_path = Path(photo_url)
+        if local_path.exists() and local_path.is_file():
+            try:
+                with local_path.open("rb") as image_file:
+                    await app.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=image_file,
+                        caption=caption,
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.HTML if parse_html else None,
+                    )
+                return True
+            except TelegramError as exc:
+                logger.warning("Telegram local photo upload failed: %s", exc)
+                return False
+
         try:
             await app.bot.send_photo(
                 chat_id=chat_id,
@@ -478,6 +499,9 @@ class PostService:
         except httpx.HTTPError as exc:
             logger.warning("Could not download product image %s: %s", url, exc)
             return None
+
+    def _has_local_image(self, images: list[str]) -> bool:
+        return any(Path(image).exists() and Path(image).is_file() for image in images)
 
     def _product_state(self, product: Product) -> str:
         if product.is_excluded:
