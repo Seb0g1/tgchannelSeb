@@ -11,7 +11,7 @@ from io import BytesIO
 from pathlib import Path
 
 import httpx
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from huggingface_hub import InferenceClient
 
 from app.config import Settings
@@ -626,6 +626,7 @@ class PollinationsImageStyler:
 
     def _apply_aromat_day_overlay(self, image_bytes: bytes, product: Product) -> bytes:
         image = Image.open(BytesIO(image_bytes)).convert("RGBA")
+        image = self._remove_generated_corner_branding(image)
         width, height = image.size
         overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
@@ -658,6 +659,27 @@ class PollinationsImageStyler:
         output = BytesIO()
         image.save(output, format="PNG", optimize=True)
         return output.getvalue()
+
+    def _remove_generated_corner_branding(self, image: Image.Image) -> Image.Image:
+        width, height = image.size
+        corner_w = int(width * 0.24)
+        corner_h = int(height * 0.34)
+        if corner_w < 80 or corner_h < 80:
+            return image
+
+        source = image.crop((0, 0, corner_w, corner_h))
+        cleaned = source.filter(ImageFilter.GaussianBlur(radius=max(18, width // 36)))
+        veil = Image.new("RGBA", cleaned.size, (5, 7, 10, 92))
+        cleaned = Image.alpha_composite(cleaned, veil)
+
+        mask = Image.new("L", cleaned.size, 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.rectangle((0, 0, corner_w, corner_h), fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=max(18, width // 42)))
+
+        result = image.copy()
+        result.paste(cleaned, (0, 0), mask)
+        return result
 
     def _draw_bottle_mark(
         self,
