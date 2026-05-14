@@ -82,6 +82,17 @@ class ScheduledPost(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ProductEvent(Base):
+    __tablename__ = "product_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(Integer, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    value: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 def make_session_factory(database_url: str) -> sessionmaker[Session]:
     if database_url.startswith("sqlite:///"):
         db_path = urlparse(database_url).path.lstrip("/")

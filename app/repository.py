@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Draft, PremiumEmoji, Product, ScheduledPost, Setting
+from app.models import Draft, PremiumEmoji, Product, ProductEvent, ScheduledPost, Setting
 from app.schemas import ProductData
 
 
@@ -142,18 +142,35 @@ class Repository:
             stmt = stmt.where(Draft.status == status)
         return int(self.session.scalar(stmt) or 0)
 
-    def latest_pending_draft(self, product_id: int) -> Draft | None:
-        return self.session.scalar(
-            select(Draft)
-            .where(Draft.product_id == product_id, Draft.status == "pending")
-            .order_by(Draft.created_at.desc())
-        )
+    def latest_pending_draft(self, product_id: int, style: str | None = None) -> Draft | None:
+        stmt = select(Draft).where(Draft.product_id == product_id, Draft.status == "pending")
+        if style is not None:
+            stmt = stmt.where(Draft.style == style)
+        return self.session.scalar(stmt.order_by(Draft.created_at.desc()))
 
     def create_draft(self, product_id: int, text: str, style: str) -> Draft:
         draft = Draft(product_id=product_id, text=text, style=style)
         self.session.add(draft)
         self.session.commit()
         return draft
+
+    def list_product_events(self, product_id: int, limit: int = 50) -> list[ProductEvent]:
+        stmt = select(ProductEvent).where(ProductEvent.product_id == product_id).order_by(ProductEvent.created_at.desc()).limit(limit)
+        return list(self.session.scalars(stmt))
+
+    def count_product_events(self, product_id: int) -> dict[str, int]:
+        rows = self.session.execute(
+            select(ProductEvent.event_type, func.count())
+            .where(ProductEvent.product_id == product_id)
+            .group_by(ProductEvent.event_type)
+        ).all()
+        return {event_type: int(count) for event_type, count in rows}
+
+    def log_product_event(self, product_id: int, event_type: str, value: str | None = None, note: str | None = None) -> ProductEvent:
+        event = ProductEvent(product_id=product_id, event_type=event_type, value=value, note=note)
+        self.session.add(event)
+        self.session.commit()
+        return event
 
     def mark_published(self, product: Product, draft: Draft, telegram_message_id: int | None = None) -> None:
         product.is_published = True

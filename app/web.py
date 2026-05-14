@@ -449,6 +449,7 @@ def create_web_app() -> FastAPI:
             "counts": counts,
             "products": [product_payload(item) for item in products],
             "drafts": [draft_payload(item) for item in drafts],
+            "featured": post_service.recommendation_cards(3),
         }
 
     @app.post("/api/sync")
@@ -523,6 +524,16 @@ def create_web_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="Draft was not created")
         return draft_payload(draft)
 
+    @app.post("/api/products/{product_id}/draft-series")
+    async def create_draft_series(product_id: int, _: str = Depends(require_admin)):
+        try:
+            drafts = await post_service.create_draft_series_for_product(product_id)
+        except TextGenerationError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if not drafts:
+            raise HTTPException(status_code=400, detail="Drafts were not created")
+        return {"items": [draft_payload(item) for item in drafts]}
+
     @app.post("/api/products/{product_id}/assemble")
     async def assemble_product_post(product_id: int, _: str = Depends(require_admin)):
         image_result = await generate_premium_image(product_id, _)
@@ -551,6 +562,7 @@ def create_web_app() -> FastAPI:
             if product is None:
                 raise HTTPException(status_code=404, detail="Product not found")
             repo.reset_product_publication(product, "deleted")
+            repo.log_product_event(product.id, "publication_reset", note="manual reset")
             return {"status": "reset", "product": product_payload(product)}
 
     @app.post("/api/products/{product_id}/publication-check")
@@ -581,6 +593,11 @@ def create_web_app() -> FastAPI:
                 checked.append({"message_id": message_id, "exists": exists, "status_code": response.status_code})
 
         if any(item["exists"] for item in checked):
+            with session_factory() as session:
+                repo = Repository(session)
+                fresh_product = repo.get_product(product_id)
+                if fresh_product:
+                    repo.log_product_event(fresh_product.id, "publication_checked", value="exists")
             return {"status": "exists", "message": "Telegram post exists.", "checked": checked, "product": product_payload(product)}
 
         with session_factory() as session:
@@ -588,6 +605,7 @@ def create_web_app() -> FastAPI:
             fresh_product = repo.get_product(product_id)
             if fresh_product:
                 repo.reset_product_publication(fresh_product, "deleted")
+                repo.log_product_event(fresh_product.id, "publication_checked", value="deleted")
                 product_data = product_payload(fresh_product)
             else:
                 product_data = product_payload(product)
@@ -641,6 +659,11 @@ def create_web_app() -> FastAPI:
     async def publish_draft(draft_id: int, _: str = Depends(require_admin)):
         bot = Bot(settings.telegram_bot_token)
         await post_service.publish_draft(SimpleNamespace(bot=bot), draft_id)
+        with session_factory() as session:
+            repo = Repository(session)
+            draft = repo.get_draft(draft_id)
+            if draft:
+                repo.log_product_event(draft.product_id, "published", value=str(draft_id))
         return {"ok": True}
 
     @app.post("/api/drafts/{draft_id}/reject")
@@ -651,6 +674,7 @@ def create_web_app() -> FastAPI:
             if draft is None:
                 raise HTTPException(status_code=404, detail="Draft not found")
             repo.reject_draft(draft)
+            repo.log_product_event(draft.product_id, "draft_rejected", value=str(draft_id))
             return draft_payload(draft)
 
     @app.get("/api/schedule")
@@ -703,6 +727,7 @@ def create_web_app() -> FastAPI:
                 except ImageGenerationError as exc:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
+                repo.log_product_event(product.id, "image_generated", value="huggingface", note=image_path)
                 return {"status": "generated", "message": "Premium image generated.", "product": product_payload(product)}
             if engine == "local_sdcpp":
                 dynamic_settings = settings.model_copy(
@@ -728,6 +753,7 @@ def create_web_app() -> FastAPI:
                 except ImageGenerationError as exc:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
+                repo.log_product_event(product.id, "image_generated", value="local_sdcpp", note=image_path)
                 return {"status": "generated", "message": "Local premium image generated.", "product": product_payload(product)}
             if engine == "freetheai":
                 dynamic_settings = settings.model_copy(
@@ -746,6 +772,7 @@ def create_web_app() -> FastAPI:
                 except ImageGenerationError as exc:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
+                repo.log_product_event(product.id, "image_generated", value="freetheai", note=image_path)
                 return {"status": "generated", "message": "FreeTheAI premium image generated.", "product": product_payload(product)}
             if engine == "pollinations":
                 dynamic_settings = settings.model_copy(
@@ -787,6 +814,7 @@ def create_web_app() -> FastAPI:
                 except ImageGenerationError as exc:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
+                repo.log_product_event(product.id, "image_generated", value="pollinations", note=image_path)
                 return {"status": "generated", "message": "Pollinations premium image generated.", "product": product_payload(product)}
             if engine == "cloudflare_worker":
                 dynamic_settings = settings.model_copy(
@@ -819,6 +847,7 @@ def create_web_app() -> FastAPI:
                 except ImageGenerationError as exc:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
+                repo.log_product_event(product.id, "image_generated", value="cloudflare_worker", note=image_path)
                 return {
                     "status": "generated",
                     "message": "Cloudflare Worker premium image generated.",
@@ -842,6 +871,7 @@ def create_web_app() -> FastAPI:
                 except ImageGenerationError as exc:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
+                repo.log_product_event(product.id, "image_generated", value="codex_sale", note=image_path)
                 return {
                     "status": "generated",
                     "message": "Codex Sale premium image generated.",
@@ -854,6 +884,17 @@ def create_web_app() -> FastAPI:
                     "product": product_payload(product),
                 }
         return {"status": "queued", "message": "ComfyUI integration placeholder is ready for workflow wiring."}
+
+    @app.get("/api/products/{product_id}/insights")
+    async def product_insights(product_id: int, _: str = Depends(require_admin)):
+        insights = post_service.product_insights(product_id)
+        if insights is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+        return insights
+
+    @app.get("/api/recommendations/day")
+    async def recommendation_day(_: str = Depends(require_admin)):
+        return {"items": post_service.recommendation_cards(5)}
 
     @app.get("/api/emojis")
     async def emojis(_: str = Depends(require_admin)):

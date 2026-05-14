@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { ArrowRight, RefreshCw, Sparkles } from 'lucide-vue-next'
-import { api, type Draft, type Product, type SyncReport } from '../api'
+import { api, type Draft, type Product, type RecommendationCard, type SyncReport } from '../api'
 
 const loading = ref(true)
 const counts = ref<Record<string, number>>({})
 const products = ref<Product[]>([])
 const drafts = ref<Draft[]>([])
+const featured = ref<RecommendationCard[]>([])
 const syncing = ref(false)
 const syncReport = ref<SyncReport | null>(null)
 const syncError = ref('')
@@ -16,6 +17,7 @@ async function load() {
   counts.value = data.counts
   products.value = data.products
   drafts.value = data.drafts
+  featured.value = data.featured || []
   loading.value = false
 }
 
@@ -87,6 +89,28 @@ onMounted(load)
       <div class="panel metric"><span>Актуальные</span><strong>{{ counts.active ?? 0 }}</strong></div>
       <div class="panel metric"><span>Архив</span><strong>{{ counts.archive ?? 0 }}</strong></div>
       <div class="panel metric"><span>Черновики</span><strong>{{ counts.drafts ?? 0 }}</strong></div>
+    </section>
+
+    <section class="panel section" v-if="featured.length">
+      <div class="block-head">
+        <div>
+          <div class="eyebrow">product of the day</div>
+          <h2>Лучшие кандидаты для поста</h2>
+        </div>
+      </div>
+      <div class="featured-grid">
+        <RouterLink v-for="item in featured" :key="item.product.id" class="featured-card" :to="`/products/${item.product.id}`">
+          <div class="featured-head">
+            <span>#{{ item.product.id }}</span>
+            <strong>{{ item.score.toFixed(0) }}</strong>
+          </div>
+          <h3>{{ item.product.name }}</h3>
+          <p class="muted">{{ item.product.brand || 'без бренда' }} · {{ item.product.price || '-' }} · остаток {{ item.product.stock ?? '-' }}</p>
+          <div class="featured-tags">
+            <span v-for="reason in item.reasons.slice(0, 3)" :key="reason" class="pill gold">{{ reason }}</span>
+          </div>
+        </RouterLink>
+      </div>
     </section>
 
     <div class="two">

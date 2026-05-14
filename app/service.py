@@ -133,26 +133,31 @@ class PostService:
         return None
 
     async def create_next_draft(self) -> Draft | None:
-        with self.session_factory() as session:
-            repo = Repository(session)
-            product = repo.get_next_unpublished()
-            if product is None:
-                return None
-            product_id = product.id
+        product = self.best_product_candidate()
+        if product is None:
+            return None
+        product_id = product.id
         return await self.create_draft_for_product(product_id)
 
-    async def create_draft_for_product(self, product_id: int) -> Draft | None:
+    def best_product_candidate(self) -> Product | None:
+        with self.session_factory() as session:
+            repo = Repository(session)
+            candidates = repo.list_products("new", limit=1000, offset=0)
+            ranked = self._rank_products(candidates, repo)
+            return ranked[0] if ranked else None
+
+    async def create_draft_for_product(self, product_id: int, style_override: str | None = None, force_new: bool = False) -> Draft | None:
         with self.session_factory() as session:
             repo = Repository(session)
             product = repo.get_product(product_id)
             if product is None or product.is_excluded:
                 return None
-            existing = repo.latest_pending_draft(product.id)
+            style = style_override or self._get_str_setting("post_style", self.settings.post_style)
+            existing = None if force_new else repo.latest_pending_draft(product.id, style)
             if existing:
                 return existing
             product_data = repo.product_to_data(product)
 
-        style = self._get_str_setting("post_style", self.settings.post_style)
         text = await self._generate_post(product_data, style)
 
         with self.session_factory() as session:
@@ -160,7 +165,23 @@ class PostService:
             fresh_product = repo.get_product(product_id)
             if fresh_product is None:
                 return None
-            return repo.create_draft(fresh_product.id, text, style)
+            draft = repo.create_draft(fresh_product.id, text, style)
+            repo.log_product_event(fresh_product.id, "draft_generated", value=style, note="single")
+            return draft
+
+    async def create_draft_series_for_product(self, product_id: int, styles: list[str] | None = None) -> list[Draft]:
+        styles = [style for style in (styles or ["premium", "selling", "short"]) if style]
+        drafts: list[Draft] = []
+        for style in styles[:3]:
+            draft = await self.create_draft_for_product(product_id, style_override=style, force_new=True)
+            if draft:
+                drafts.append(draft)
+        with self.session_factory() as session:
+            repo = Repository(session)
+            product = repo.get_product(product_id)
+            if product:
+                repo.log_product_event(product.id, "series_generated", value=",".join(styles[:3]), note=f"count={len(drafts)}")
+        return drafts
 
     async def sync_and_prepare(self, app: Application) -> None:
         try:
@@ -437,6 +458,7 @@ class PostService:
             if product is None:
                 raise ValueError("Product not found")
             new_draft = repo.create_draft(product.id, text, style)
+            repo.log_product_event(product.id, "draft_generated", value=style, note="regenerated")
         await self.send_draft_to_owner(app, new_draft.id)
         return new_draft.id
 
@@ -449,6 +471,7 @@ class PostService:
             product = repo.get_product(draft.product_id)
             if product:
                 repo.exclude_product(product, True)
+                repo.log_product_event(product.id, "excluded", note="manual skip")
             repo.reject_draft(draft)
 
     async def set_product_excluded(self, product_id: int, value: bool) -> bool:
@@ -458,6 +481,7 @@ class PostService:
             if product is None:
                 return False
             repo.exclude_product(product, value)
+            repo.log_product_event(product.id, "excluded" if value else "included", note="manual toggle")
             return True
 
     async def edit_draft(self, draft_id: int, text: str) -> bool:
@@ -468,7 +492,41 @@ class PostService:
                 return False
             draft.text = text
             session.commit()
+            repo.log_product_event(draft.product_id, "draft_edited", note=f"draft={draft.id}")
             return True
+
+    def recommendation_cards(self, limit: int = 3) -> list[dict[str, object]]:
+        with self.session_factory() as session:
+            repo = Repository(session)
+            candidates = repo.list_products("new", limit=1000, offset=0)
+            ranked = self._rank_products(candidates, repo)[:limit]
+            return [self._recommendation_payload(product, repo) for product in ranked]
+
+    def product_insights(self, product_id: int) -> dict[str, object] | None:
+        with self.session_factory() as session:
+            repo = Repository(session)
+            product = repo.get_product(product_id)
+            if product is None:
+                return None
+            events = repo.count_product_events(product_id)
+            drafts = repo.list_drafts("all", limit=200)
+            product_drafts = [draft for draft in drafts if draft.product_id == product.id]
+            recommended = self._recommendation_payload(product, repo)
+            return {
+                "product": self._product_brief(product),
+                "events": events,
+                "drafts_count": len(product_drafts),
+                "recommended": recommended,
+                "timeline": [
+                    {
+                        "event_type": item.event_type,
+                        "value": item.value,
+                        "note": item.note,
+                        "created_at": item.created_at.isoformat() if item.created_at else None,
+                    }
+                    for item in repo.list_product_events(product_id, limit=12)
+                ],
+            }
 
     async def _generate_post(self, product_data, style: str) -> str:
         engine = self._get_str_setting("text_engine", self.settings.text_engine)
@@ -540,6 +598,127 @@ class PostService:
             return int(value)
         except ValueError:
             return default
+
+    def _rank_products(self, products: list[Product], repo: Repository) -> list[Product]:
+        def score(product: Product) -> tuple[float, list[str]]:
+            events = repo.count_product_events(product.id)
+            reasons: list[str] = []
+            value = 0.0
+            if product.is_active and not product.is_excluded:
+                value += 35
+                reasons.append("active")
+            if not product.is_published:
+                value += 22
+                reasons.append("fresh")
+            stock = product.stock or 0
+            if stock > 0:
+                stock_bonus = min(stock, 50) * 2
+                value += stock_bonus
+                reasons.append(f"stock {stock}")
+            price_value = self._parse_price_value(product.price)
+            if price_value is not None:
+                if price_value <= 5000:
+                    value += 18
+                    reasons.append("good price")
+                elif price_value <= 10000:
+                    value += 10
+                    reasons.append("balanced price")
+            if product.styled_image_path:
+                value += 15
+                reasons.append("premium image ready")
+            elif product.images_json and product.images_json != "[]":
+                value += 5
+                reasons.append("has source photo")
+            if product.updated_at:
+                age_days = max(0, (datetime.utcnow() - product.updated_at).days)
+                freshness = max(0, 18 - age_days)
+                value += freshness
+                if freshness:
+                    reasons.append("recently updated")
+            value += min(events.get("draft_generated", 0), 5) * 2
+            if events.get("published"):
+                value -= 50
+            return value, reasons
+
+        scored = [(product, *score(product)) for product in products]
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return [item[0] for item in scored]
+
+    def _recommendation_payload(self, product: Product, repo: Repository) -> dict[str, object]:
+        events = repo.count_product_events(product.id)
+        score, reasons = self._score_product(product, events)
+        return {
+            "product": self._product_brief(product),
+            "score": round(score, 2),
+            "reasons": reasons,
+            "events": events,
+        }
+
+    def _score_product(self, product: Product, events: dict[str, int]) -> tuple[float, list[str]]:
+        reasons: list[str] = []
+        value = 0.0
+        if product.is_active and not product.is_excluded:
+            value += 35
+            reasons.append("active")
+        if not product.is_published:
+            value += 22
+            reasons.append("ready for post")
+        stock = product.stock or 0
+        if stock > 0:
+            stock_bonus = min(stock, 50) * 2
+            value += stock_bonus
+            reasons.append(f"stock {stock}")
+        price_value = self._parse_price_value(product.price)
+        if price_value is not None:
+            if price_value <= 5000:
+                value += 18
+                reasons.append("nice price")
+            elif price_value <= 10000:
+                value += 10
+                reasons.append("mid price")
+        if product.styled_image_path:
+            value += 15
+            reasons.append("premium image")
+        elif product.images_json and product.images_json != "[]":
+            value += 5
+            reasons.append("source photo")
+        if product.updated_at:
+            age_days = max(0, (datetime.utcnow() - product.updated_at).days)
+            freshness = max(0, 18 - age_days)
+            value += freshness
+            if freshness:
+                reasons.append("recently refreshed")
+        value += min(events.get("draft_generated", 0), 5) * 2
+        value += min(events.get("image_generated", 0), 3) * 1.5
+        if events.get("published"):
+            value -= 50
+        return value, reasons
+
+    def _parse_price_value(self, value: str | None) -> float | None:
+        if not value:
+            return None
+        text = str(value).replace("\xa0", " ")
+        match = re.search(r"(\d[\d\s]*(?:[.,]\d+)?)", text)
+        if not match:
+            return None
+        raw = match.group(1).replace(" ", "").replace(",", ".")
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+
+    def _product_brief(self, product: Product) -> dict[str, object]:
+        return {
+            "id": product.id,
+            "offer_id": product.offer_id,
+            "name": product.name,
+            "brand": product.brand,
+            "price": product.price,
+            "stock": product.stock,
+            "is_active": product.is_active,
+            "is_published": product.is_published,
+            "styled_image_path": product.styled_image_path,
+        }
 
     def _prepare_telegram_html(self, repo: Repository, text: str) -> str:
         rendered = escape(self._strip_markdown(text))

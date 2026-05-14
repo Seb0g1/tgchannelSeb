@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { CheckCircle2, ImagePlus, RefreshCw, RotateCcw, Save, Send, Sparkles, WandSparkles } from 'lucide-vue-next'
-import { api, type Draft, type Product } from '../api'
+import { BarChart3, CheckCircle2, CopyPlus, ImagePlus, RefreshCw, RotateCcw, Save, Send, Sparkles, WandSparkles } from 'lucide-vue-next'
+import { api, type Draft, type Product, type ProductInsights } from '../api'
 
 const route = useRoute()
 const loading = ref(true)
@@ -18,6 +18,8 @@ const statusMessage = ref('')
 const product = ref<Product | null>(null)
 const attributes = ref<Array<{ name: string; value: string }>>([])
 const drafts = ref<Draft[]>([])
+const insights = ref<ProductInsights | null>(null)
+const seriesGenerating = ref(false)
 
 let draftTimer: ReturnType<typeof setInterval> | null = null
 let imageTimer: ReturnType<typeof setInterval> | null = null
@@ -59,14 +61,18 @@ function errorText(error: unknown) {
 
 async function load() {
   loading.value = true
-  const { data } = await api.get(`/products/${productId.value}`)
-  product.value = data.product
-  attributes.value = data.attributes
-  drafts.value = data.drafts
+  const [{ data: productData }, { data: insightsData }] = await Promise.all([
+    api.get(`/products/${productId.value}`),
+    api.get(`/products/${productId.value}/insights`),
+  ])
+  product.value = productData.product
+  attributes.value = productData.attributes
+  drafts.value = productData.drafts
+  insights.value = insightsData
   form.value = {
-    order_url: data.product.order_url || data.product.url || '',
-    is_active: data.product.is_active,
-    is_excluded: data.product.is_excluded,
+    order_url: productData.product.order_url || productData.product.url || '',
+    is_active: productData.product.is_active,
+    is_excluded: productData.product.is_excluded,
   }
   loading.value = false
 }
@@ -96,6 +102,20 @@ async function createDraft() {
     statusMessage.value = errorText(error)
   } finally {
     generatingDraft.value = false
+  }
+}
+
+async function createSeries() {
+  seriesGenerating.value = true
+  statusMessage.value = 'Генерирую серию вариантов...'
+  try {
+    await api.post(`/products/${productId.value}/draft-series`)
+    statusMessage.value = 'Серия черновиков готова'
+    await load()
+  } catch (error) {
+    statusMessage.value = errorText(error)
+  } finally {
+    seriesGenerating.value = false
   }
 }
 
@@ -201,6 +221,9 @@ onMounted(load)
           <button class="button secondary" :disabled="busy" @click="createDraft">
             <WandSparkles :size="18" /> Текст
           </button>
+          <button class="button secondary" :disabled="busy || seriesGenerating" @click="createSeries">
+            <CopyPlus :size="18" /> {{ seriesGenerating ? 'Серии...' : 'A/B варианты' }}
+          </button>
           <button class="button secondary" :disabled="busy" @click="generateImage">
             <ImagePlus :size="18" /> {{ premiumImage ? 'Переделать картинку' : 'Сделать картинку' }}
           </button>
@@ -291,6 +314,35 @@ onMounted(load)
           <div v-for="draft in drafts" :key="draft.id" class="draft-mini">
             <div><b>#{{ draft.id }}</b><span>{{ draft.status }}</span></div>
             <p>{{ draft.text.slice(0, 220) }}{{ draft.text.length > 220 ? '...' : '' }}</p>
+          </div>
+        </div>
+
+        <div class="panel section" v-if="insights">
+          <div class="block-head">
+            <div>
+              <div class="eyebrow">analytics</div>
+              <h2><BarChart3 :size="18" /> Товарная аналитика</h2>
+            </div>
+          </div>
+          <div class="analytics-grid">
+            <div><span>Черновики</span><strong>{{ insights.drafts_count }}</strong></div>
+            <div><span>Генерации текста</span><strong>{{ insights.events.draft_generated || 0 }}</strong></div>
+            <div><span>Генерации картинок</span><strong>{{ insights.events.image_generated || 0 }}</strong></div>
+            <div><span>Проверки Telegram</span><strong>{{ insights.events.publication_checked || 0 }}</strong></div>
+            <div><span>Серии</span><strong>{{ insights.events.series_generated || 0 }}</strong></div>
+            <div><span>Публикации</span><strong>{{ insights.events.published || 0 }}</strong></div>
+            <div><span>Score</span><strong>{{ insights.recommended.score.toFixed(0) }}</strong></div>
+          </div>
+          <div class="recommendation-box">
+            <div class="muted">Почему товар хорош для поста дня</div>
+            <p>{{ insights.recommended.reasons.join(' · ') || 'Нет данных' }}</p>
+          </div>
+          <div v-if="insights.timeline.length" class="timeline">
+            <div v-for="event in insights.timeline" :key="event.created_at + event.event_type">
+              <b>{{ event.event_type }}</b>
+              <span>{{ event.value || '-' }}</span>
+              <p>{{ event.note || '' }}</p>
+            </div>
           </div>
         </div>
       </section>

@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from app.config import Settings
+from app.repository import Repository
 from app.service import PostService
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,8 @@ def register_handlers(app: Application, service: PostService, settings: Settings
             "/products [new|all|published|excluded] [страница] - список товаров\n"
             "/product <id> - карточка товара и действия\n"
             "/draft [product_id] - черновик для товара или следующего нового\n"
+            "/series [product_id] - A/B серия черновиков для товара или следующего нового\n"
+            "/day - показать лучший товар дня\n"
             "/drafts [pending|published|rejected|all] [страница] - список черновиков\n\n"
             "Управление:\n"
             "/publish <draft_id> - опубликовать черновик\n"
@@ -98,6 +101,42 @@ def register_handlers(app: Application, service: PostService, settings: Settings
             await update.message.reply_text("Нет подходящего товара для черновика.")
             return
         await service.send_draft_to_owner(context.application, created.id)
+
+    @guard
+    async def series(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if context.args:
+            product_id = await _required_int(context.args, update, "Формат: /series [product_id]")
+            if product_id is None:
+                return
+        else:
+            best_product = service.best_product_candidate()
+            if best_product is None:
+                await update.message.reply_text("Нет подходящего товара для серии.")
+                return
+            product_id = best_product.id
+        drafts = await service.create_draft_series_for_product(product_id)
+        if not drafts:
+            await update.message.reply_text("Серия черновиков не создана.")
+            return
+        await update.message.reply_text(f"Серия создана: {', '.join(f'#{draft.id}' for draft in drafts)}")
+
+    @guard
+    async def day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        best_product = service.best_product_candidate()
+        if best_product is None:
+            await update.message.reply_text("Пока не нашёл товар дня.")
+            return
+        with service.session_factory() as session:
+            repo = Repository(session)
+            item = service._recommendation_payload(best_product, repo)
+        product = item["product"]
+        reasons = ", ".join(item["reasons"][:3]) if item.get("reasons") else "нет причин"
+        await update.message.reply_text(
+            f"Товар дня: #{product['id']} {product['name']}\n"
+            f"Цена: {product['price'] or '-'}\n"
+            f"Остаток: {product['stock'] if product['stock'] is not None else '-'}\n"
+            f"Почему: {reasons}"
+        )
 
     @guard
     async def drafts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -201,6 +240,8 @@ def register_handlers(app: Application, service: PostService, settings: Settings
     app.add_handler(CommandHandler("products", products))
     app.add_handler(CommandHandler("product", product))
     app.add_handler(CommandHandler("draft", draft))
+    app.add_handler(CommandHandler("series", series))
+    app.add_handler(CommandHandler("day", day))
     app.add_handler(CommandHandler("drafts", drafts))
     app.add_handler(CommandHandler("run", run))
     app.add_handler(CommandHandler("publish", publish))

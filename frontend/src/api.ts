@@ -82,3 +82,33 @@ export type ScheduledPost = {
   status: string
   created_at: string | null
 }
+
+export type RecommendationCard = {
+  product: {
+    id: number
+    offer_id: string
+    name: string
+    brand: string | null
+    price: string | null
+    stock: number | null
+    is_active: boolean
+    is_published: boolean
+    styled_image_path: string | null
+  }
+  score: number
+  reasons: string[]
+  events: Record<string, number>
+}
+
+export type ProductInsights = {
+  product: RecommendationCard['product']
+  events: Record<string, number>
+  drafts_count: number
+  recommended: RecommendationCard
+  timeline: Array<{
+    event_type: string
+    value: string | null
+    note: string | null
+    created_at: string | null
+  }>
+}
