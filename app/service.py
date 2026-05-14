@@ -157,8 +157,12 @@ class PostService:
             if existing:
                 return existing
             product_data = repo.product_to_data(product)
+            public_price = await self._resolve_public_page_price(product_data, product, repo)
+            if public_price:
+                product_data = product_data.model_copy(update={"page_price": public_price})
 
         text = await self._generate_post(product_data, style)
+        text = self._inject_price_note(text, product_data.page_price or product_data.price)
 
         with self.session_factory() as session:
             repo = Repository(session)
@@ -182,6 +186,46 @@ class PostService:
             if product:
                 repo.log_product_event(product.id, "series_generated", value=",".join(styles[:3]), note=f"count={len(drafts)}")
         return drafts
+
+    async def refresh_public_page_price(self, product_id: int) -> tuple[Product | None, str | None]:
+        with self.session_factory() as session:
+            repo = Repository(session)
+            product = repo.get_product(product_id)
+            if product is None:
+                return None, None
+            product_data = repo.product_to_data(product)
+
+        public_price = await self._resolve_public_page_price(product_data, product, None, force_refresh=True)
+        with self.session_factory() as session:
+            repo = Repository(session)
+            fresh = repo.get_product(product_id)
+            if fresh is None:
+                return None, public_price
+            if public_price:
+                repo.update_product_page_price(fresh, public_price)
+            repo.log_product_event(fresh.id, "price_refreshed", value=public_price, note="public page")
+            return fresh, public_price
+
+    async def _resolve_public_page_price(
+        self,
+        product_data: ProductData,
+        product: Product | None,
+        repo: Repository | None,
+        force_refresh: bool = False,
+    ) -> str | None:
+        cached_price = product.page_price if product else product_data.page_price
+        cached_checked_at = product.page_price_checked_at if product else None
+        if not force_refresh and cached_price:
+            if cached_checked_at and (datetime.utcnow() - cached_checked_at).total_seconds() < 3600:
+                return cached_price
+
+        page_url = product_data.url or (product.order_url if product else None) or (product.url if product else None)
+        live_price = await self.ozon.fetch_public_price(page_url)
+        if live_price:
+            if repo is not None and product is not None:
+                repo.update_product_page_price(product, live_price)
+            return live_price
+        return cached_price or product_data.price
 
     async def sync_and_prepare(self, app: Application) -> None:
         try:
@@ -215,7 +259,7 @@ class PostService:
         keyboard: list[list[InlineKeyboardButton]] = []
         for product in products:
             state = self._product_state(product)
-            price = f", {product.price}" if product.price else ""
+            price = f", {product.page_price or product.price}" if (product.page_price or product.price) else ""
             stock = f", остаток {product.stock}" if product.stock is not None else ""
             lines.append(f"#{product.id} [{state}] {product.name}{price}{stock}")
             keyboard.append([InlineKeyboardButton(f"#{product.id} {self._short(product.name, 38)}", callback_data=f"show_product:{product.id}")])
@@ -238,6 +282,7 @@ class PostService:
 
             attrs = self._load_json_list(product.attributes_json)
             attrs_preview = "\n".join(f"- {a.get('name')}: {a.get('value')}" for a in attrs[:8]) or "Нет характеристик."
+            display_price = product.page_price or product.price or "-"
             text = (
                 f"Товар #{product.id}\n"
                 f"Статус: {self._product_state(product)}\n"
@@ -247,13 +292,15 @@ class PostService:
                 f"SKU: {product.sku or '-'}\n"
                 f"Бренд: {product.brand or '-'}\n"
                 f"Категория: {product.category or '-'}\n"
-                f"Цена: {product.price or '-'}\n"
+                f"Цена: {display_price}\n"
+                f"Цена на странице: {product.page_price or '-'}\n"
                 f"Остаток: {product.stock if product.stock is not None else '-'}\n"
                 f"Ссылка заказа: {product.order_url or product.url or '-'}\n\n"
                 f"Характеристики:\n{attrs_preview}"
             )
             keyboard = [
                 [InlineKeyboardButton("Создать черновик", callback_data=f"draft_product:{product.id}")],
+                [InlineKeyboardButton("Обновить цену страницы", callback_data=f"refresh_price:{product.id}")],
             ]
             if product.is_excluded:
                 keyboard.append([InlineKeyboardButton("Вернуть в очередь", callback_data=f"include_product:{product.id}")])
@@ -615,7 +662,7 @@ class PostService:
                 stock_bonus = min(stock, 50) * 2
                 value += stock_bonus
                 reasons.append(f"stock {stock}")
-            price_value = self._parse_price_value(product.price)
+            price_value = self._parse_price_value(product.page_price or product.price)
             if price_value is not None:
                 if price_value <= 5000:
                     value += 18
@@ -668,7 +715,7 @@ class PostService:
             stock_bonus = min(stock, 50) * 2
             value += stock_bonus
             reasons.append(f"stock {stock}")
-        price_value = self._parse_price_value(product.price)
+        price_value = self._parse_price_value(product.page_price or product.price)
         if price_value is not None:
             if price_value <= 5000:
                 value += 18
@@ -713,7 +760,9 @@ class PostService:
             "offer_id": product.offer_id,
             "name": product.name,
             "brand": product.brand,
-            "price": product.price,
+            "price": product.page_price or product.price,
+            "api_price": product.price,
+            "page_price": product.page_price,
             "stock": product.stock,
             "is_active": product.is_active,
             "is_published": product.is_published,
@@ -729,6 +778,29 @@ class PostService:
             rendered = rendered.replace(escape(item.emoji), replacement)
         return rendered
 
+    def _inject_price_note(self, text: str, price: str | None) -> str:
+        if not price:
+            return text.strip()
+        disclaimer = "Цена может отличаться, проверяйте у себя!"
+        working = text.strip()
+        price_pattern = re.compile(r"(?im)^\s*(?:[-–—•]\s*)?(?:цена|стоимость|от)\s*[:：-]\s*.*$")
+        if price_pattern.search(working):
+            working = price_pattern.sub(f"от: {price}", working, count=1)
+        else:
+            working = self._insert_before_hashtags(working, f"от: {price}")
+        if disclaimer.lower() not in working.lower():
+            working = self._insert_before_hashtags(working, disclaimer)
+        return re.sub(r"\n{3,}", "\n\n", working).strip()
+
+    def _insert_before_hashtags(self, text: str, addition: str) -> str:
+        hashtag_match = re.search(r"(\n[#\wА-Яа-яЁё][^\n]*(?:\n[#\wА-Яа-яЁё][^\n]*)*)\s*$", text)
+        if hashtag_match:
+            start = hashtag_match.start(1)
+            head = text[:start].rstrip()
+            tail = text[start:].lstrip()
+            return f"{head}\n\n{addition}\n\n{tail}".strip()
+        return f"{text.rstrip()}\n\n{addition}".strip()
+
     def _strip_markdown(self, text: str) -> str:
         cleaned = re.sub(r"^#{1,6}\s*", "", text.strip(), flags=re.MULTILINE)
         cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
@@ -739,13 +811,10 @@ class PostService:
         return cleaned.replace("**", "").replace("__", "").strip()
 
     def _normalize_price_text(self, text: str, product: Product) -> str:
-        price = self._format_price(product.price)
+        price = self._format_price(product.page_price or product.price)
         if not price:
             return text
-        pattern = r"(?im)^(\s*[-–—]?\s*(?:цена|стоимость)\s*[:：]\s*)(.+)$"
-        if not re.search(pattern, text):
-            return text
-        return re.sub(pattern, rf"\g<1>{price}", text).strip()
+        return self._inject_price_note(text, price)
 
     def _normalize_order_text(self, text: str, product: Product) -> str:
         url = product.order_url or product.url
@@ -774,8 +843,8 @@ class PostService:
         url = product.order_url or product.url
         if not url or not url.startswith(("http://", "https://")):
             return None
-        price = self._format_price(product.price)
-        label = f"Заказать · {price}" if price else "Заказать"
+        price = self._format_price(product.page_price or product.price)
+        label = f"Заказать · от {price}" if price else "Заказать"
         return InlineKeyboardMarkup([[InlineKeyboardButton(label, url=url)]])
 
     def _format_price(self, value: str | int | float | None) -> str | None:

@@ -11,6 +11,7 @@ const assembling = ref(false)
 const generatingDraft = ref(false)
 const generatingImage = ref(false)
 const checkingPublication = ref(false)
+const refreshingPrice = ref(false)
 const draftProgress = ref(0)
 const imageProgress = ref(0)
 const assembleProgress = ref(0)
@@ -31,7 +32,7 @@ const latestDraft = computed(() => drafts.value.find((item) => item.status === '
 const sourceImage = computed(() => product.value?.images?.[0] || '')
 const premiumImage = computed(() => product.value?.styled_image_url || product.value?.styled_image_path || '')
 const heroImage = computed(() => premiumImage.value || sourceImage.value)
-const busy = computed(() => saving.value || assembling.value || generatingDraft.value || generatingImage.value || checkingPublication.value)
+const busy = computed(() => saving.value || assembling.value || generatingDraft.value || generatingImage.value || checkingPublication.value || refreshingPrice.value)
 
 function startProgress(target: typeof draftProgress | typeof imageProgress | typeof assembleProgress, timerName: 'draft' | 'image' | 'assemble') {
   target.value = 8
@@ -171,6 +172,21 @@ async function checkPublication() {
   }
 }
 
+async function refreshPrice() {
+  refreshingPrice.value = true
+  statusMessage.value = 'Смотрю цену на странице Ozon...'
+  try {
+    const { data } = await api.post(`/products/${productId.value}/refresh-price`)
+    statusMessage.value = data.page_price ? `Цена страницы обновлена: ${data.page_price}` : data.message
+    if (data.product) product.value = data.product
+    await load()
+  } catch (error) {
+    statusMessage.value = errorText(error)
+  } finally {
+    refreshingPrice.value = false
+  }
+}
+
 async function resetPublication() {
   checkingPublication.value = true
   statusMessage.value = 'Возвращаю товар в очередь публикаций...'
@@ -209,7 +225,8 @@ onMounted(load)
         <p class="muted">{{ product.offer_id }} · {{ product.sku || '-' }} · {{ product.brand || 'без бренда' }}</p>
 
         <div class="product-stats">
-          <div><span>Цена для поста</span><b>{{ product.price || '-' }}</b></div>
+          <div><span>Цена на странице</span><b>{{ product.page_price || product.price || '-' }}</b></div>
+          <div><span>Цена API</span><b>{{ product.price || '-' }}</b></div>
           <div><span>Остаток</span><b>{{ product.stock ?? '-' }}</b></div>
           <div><span>Видимость</span><b>{{ product.visibility || '-' }}</b></div>
         </div>
@@ -226,6 +243,9 @@ onMounted(load)
           </button>
           <button class="button secondary" :disabled="busy" @click="generateImage">
             <ImagePlus :size="18" /> {{ premiumImage ? 'Переделать картинку' : 'Сделать картинку' }}
+          </button>
+          <button class="button secondary" :disabled="busy" @click="refreshPrice">
+            <RefreshCw :size="18" /> {{ refreshingPrice ? 'Обновляю цену...' : 'Обновить цену страницы' }}
           </button>
           <button class="button secondary" :disabled="busy" @click="checkPublication">
             <CheckCircle2 :size="18" /> Проверить Telegram
@@ -265,7 +285,7 @@ onMounted(load)
             <img v-if="heroImage" :src="heroImage" :alt="product.name">
             <div class="telegram-text">{{ latestDraft.text }}</div>
             <button class="telegram-order">
-              <Send :size="15" /> Заказать{{ product.price ? ` · ${product.price}` : '' }}
+              <Send :size="15" /> Заказать{{ product.page_price || product.price ? ` · от ${product.page_price || product.price}` : '' }}
             </button>
           </div>
           <div v-else class="empty compact">Черновика пока нет. Нажмите “Собрать пост”.</div>

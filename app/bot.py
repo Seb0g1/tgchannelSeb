@@ -213,6 +213,14 @@ def register_handlers(app: Application, service: PostService, settings: Settings
                     await service.send_draft_to_owner(context.application, draft_obj.id)
                 else:
                     await query.message.reply_text("Не получилось создать черновик для товара.")
+            elif action == "refresh_price":
+                product, price = await service.refresh_public_page_price(int(parts[1]))
+                if product is None:
+                    await query.message.reply_text("Товар не найден.")
+                elif price:
+                    await query.message.reply_text(f"Цена страницы обновлена: {price}")
+                else:
+                    await query.message.reply_text("Цену на странице не удалось определить.")
             elif action == "exclude_product":
                 await service.set_product_excluded(int(parts[1]), True)
                 await query.message.reply_text("Товар исключен.")

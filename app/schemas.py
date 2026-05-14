@@ -12,6 +12,7 @@ class ProductData(BaseModel):
     attributes: list[dict] = Field(default_factory=list)
     images: list[str] = Field(default_factory=list)
     price: str | None = None
+    page_price: str | None = None
     stock: int | None = None
     url: str | None = None
     visibility: str | None = None

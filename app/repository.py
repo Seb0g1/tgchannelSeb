@@ -28,6 +28,8 @@ class Repository:
         product.attributes_json = json.dumps(data.attributes, ensure_ascii=False)
         product.images_json = json.dumps(data.images, ensure_ascii=False)
         product.price = data.price
+        if data.page_price is not None:
+            product.page_price = data.page_price
         product.stock = data.stock
         product.url = data.url
         if not product.order_url:
@@ -49,6 +51,7 @@ class Repository:
             attributes=json.loads(product.attributes_json or "[]"),
             images=json.loads(product.images_json or "[]"),
             price=product.price,
+            page_price=product.page_price,
             stock=product.stock,
             url=product.order_url or product.url,
             visibility=product.visibility,
@@ -209,6 +212,11 @@ class Repository:
         product.order_url = order_url
         product.is_active = is_active
         product.is_excluded = is_excluded
+        self.session.commit()
+
+    def update_product_page_price(self, product: Product, page_price: str | None) -> None:
+        product.page_price = page_price
+        product.page_price_checked_at = datetime.utcnow() if page_price else None
         self.session.commit()
 
     def update_product_styled_image(self, product: Product, path: str) -> None:

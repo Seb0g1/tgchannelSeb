@@ -105,7 +105,7 @@ onMounted(load)
             <strong>{{ item.score.toFixed(0) }}</strong>
           </div>
           <h3>{{ item.product.name }}</h3>
-          <p class="muted">{{ item.product.brand || 'без бренда' }} · {{ item.product.price || '-' }} · остаток {{ item.product.stock ?? '-' }}</p>
+          <p class="muted">{{ item.product.brand || 'без бренда' }} · {{ item.product.page_price || item.product.price || '-' }} · остаток {{ item.product.stock ?? '-' }}</p>
           <div class="featured-tags">
             <span v-for="reason in item.reasons.slice(0, 3)" :key="reason" class="pill gold">{{ reason }}</span>
           </div>
@@ -127,7 +127,7 @@ onMounted(load)
                   <RouterLink :to="`/products/${product.id}`">{{ product.name }}</RouterLink>
                   <div class="muted">{{ product.offer_id }} · {{ product.brand || 'без бренда' }}</div>
                 </td>
-                <td>{{ product.price || '-' }}</td>
+                <td>{{ product.page_price || product.price || '-' }}</td>
                 <td><span class="pill green">new</span></td>
               </tr>
             </tbody>

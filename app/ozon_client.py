@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -18,6 +20,18 @@ class OzonClient:
             "Client-Id": client_id,
             "Api-Key": api_key,
             "Content-Type": "application/json",
+        }
+        self._browser_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+            "Referer": "https://www.ozon.ru/",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Upgrade-Insecure-Requests": "1",
         }
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -71,6 +85,24 @@ class OzonClient:
                 )
             )
         return products
+
+    async def fetch_public_price(self, product_url: str | None) -> str | None:
+        if not product_url:
+            return None
+        normalized = str(product_url).strip()
+        if not normalized.startswith(("http://", "https://")):
+            return None
+
+        html = await self._fetch_public_page_html(normalized)
+        if html:
+            price = self._extract_public_price_from_html(html)
+            if price:
+                return price
+
+        html = await self._fetch_public_page_html_with_playwright(normalized)
+        if html:
+            return self._extract_public_price_from_html(html)
+        return None
 
     async def _fetch_product_ids(self, limit: int) -> list[str]:
         items: list[dict[str, Any]] = []
@@ -166,6 +198,101 @@ class OzonClient:
         except httpx.HTTPError as exc:
             logger.warning("Ozon stocks endpoint failed: %s", exc)
             return []
+
+    async def _fetch_public_page_html(self, url: str) -> str | None:
+        try:
+            async with httpx.AsyncClient(
+                headers=self._browser_headers,
+                follow_redirects=True,
+                timeout=httpx.Timeout(30, connect=10),
+            ) as client:
+                response = await client.get(url)
+            if response.status_code in {403, 429}:
+                logger.info("Ozon public page blocked with HTTP %s for %s", response.status_code, url)
+                return None
+            response.raise_for_status()
+            text = response.text
+            if "Antibot Challenge Page" in text:
+                return None
+            return text
+        except httpx.HTTPError as exc:
+            logger.info("Ozon public page fetch failed for %s: %s", url, exc)
+            return None
+
+    async def _fetch_public_page_html_with_playwright(self, url: str) -> str | None:
+        try:
+            from playwright.async_api import async_playwright  # type: ignore
+        except Exception:
+            return None
+
+        try:
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                )
+                context = await browser.new_context(
+                    user_agent=self._browser_headers["User-Agent"],
+                    locale="ru-RU",
+                    viewport={"width": 1440, "height": 1600},
+                )
+                page = await context.new_page()
+                await page.goto(url, wait_until="networkidle", timeout=45000)
+                html = await page.content()
+                await context.close()
+                await browser.close()
+                if "Antibot Challenge Page" in html:
+                    return None
+                return html
+        except Exception as exc:
+            logger.info("Ozon public page playwright failed for %s: %s", url, exc)
+            return None
+
+    def _extract_public_price_from_html(self, html: str) -> str | None:
+        for block in re.findall(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, re.I | re.S):
+            try:
+                data = json.loads(block.strip())
+            except Exception:
+                continue
+            price = self._find_price_in_json(data)
+            if price:
+                return price
+
+        patterns = [
+            r'"currentPrice"\s*:\s*\{[^{}]{0,200}?"value"\s*:\s*"?(?P<price>\d[\d\s.,]*)',
+            r'"salePrice"\s*:\s*\{[^{}]{0,200}?"value"\s*:\s*"?(?P<price>\d[\d\s.,]*)',
+            r'"price"\s*:\s*\{[^{}]{0,200}?"value"\s*:\s*"?(?P<price>\d[\d\s.,]*)',
+            r'"currentPrice"\s*:\s*"?(?P<price>\d[\d\s.,]*)',
+            r'"salePrice"\s*:\s*"?(?P<price>\d[\d\s.,]*)',
+            r'"price"\s*:\s*"?(?P<price>\d[\d\s.,]*)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, html, re.I | re.S)
+            if not match:
+                continue
+            price = self._format_price(match.group("price"), "RUB")
+            if price:
+                return price
+        return None
+
+    def _find_price_in_json(self, value: Any) -> str | None:
+        if isinstance(value, dict):
+            for key in ("price", "lowPrice", "highPrice", "currentPrice", "salePrice", "discountPrice"):
+                if key not in value:
+                    continue
+                price = self._format_price(value.get(key), value.get("priceCurrency") or value.get("currency"))
+                if price:
+                    return price
+            for nested in value.values():
+                price = self._find_price_in_json(nested)
+                if price:
+                    return price
+        elif isinstance(value, list):
+            for nested in value:
+                price = self._find_price_in_json(nested)
+                if price:
+                    return price
+        return None
 
     def _normalize_attributes(self, item: dict[str, Any]) -> list[dict[str, str]]:
         attrs = item.get("attributes") or []

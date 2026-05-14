@@ -188,6 +188,8 @@ def product_payload(product: Product) -> dict:
         "category": product.category,
         "description": product.description,
         "price": product.price,
+        "page_price": product.page_price,
+        "page_price_checked_at": product.page_price_checked_at.isoformat() if product.page_price_checked_at else None,
         "stock": product.stock,
         "url": product.url,
         "order_url": product.order_url,
@@ -523,6 +525,17 @@ def create_web_app() -> FastAPI:
         if draft is None:
             raise HTTPException(status_code=400, detail="Draft was not created")
         return draft_payload(draft)
+
+    @app.post("/api/products/{product_id}/refresh-price")
+    async def refresh_price(product_id: int, _: str = Depends(require_admin)):
+        product, price = await post_service.refresh_public_page_price(product_id)
+        if product is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+        return {
+            "product": product_payload(product),
+            "page_price": price,
+            "message": price or "Public page price not detected",
+        }
 
     @app.post("/api/products/{product_id}/draft-series")
     async def create_draft_series(product_id: int, _: str = Depends(require_admin)):

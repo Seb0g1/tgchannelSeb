@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, create_engine, text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
@@ -26,6 +26,8 @@ class Product(Base):
     attributes_json: Mapped[str] = mapped_column(Text, default="[]")
     images_json: Mapped[str] = mapped_column(Text, default="[]")
     price: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    page_price: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    page_price_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     stock: Mapped[int | None] = mapped_column(Integer, nullable=True)
     url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     order_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
@@ -101,21 +103,25 @@ def make_session_factory(database_url: str) -> sessionmaker[Session]:
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     engine = create_engine(database_url, connect_args=connect_args)
     Base.metadata.create_all(engine)
-    _ensure_lightweight_schema(engine)
+    _ensure_product_schema(engine)
     return sessionmaker(engine, expire_on_commit=False)
 
 
-def _ensure_lightweight_schema(engine) -> None:
-    if engine.dialect.name != "sqlite":
-        return
+def _ensure_product_schema(engine) -> None:
     columns = {
         "order_url": "TEXT",
         "visibility": "VARCHAR(128)",
         "is_active": "BOOLEAN DEFAULT 1",
         "styled_image_path": "TEXT",
+        "page_price": "VARCHAR(128)",
+        "page_price_checked_at": "TIMESTAMP WITHOUT TIME ZONE",
     }
+    inspector = inspect(engine)
+    try:
+        existing = {column["name"] for column in inspector.get_columns("products")}
+    except Exception:
+        return
     with engine.begin() as conn:
-        existing = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(products)").all()}
         for name, ddl in columns.items():
             if name not in existing:
                 conn.execute(text(f"ALTER TABLE products ADD COLUMN {name} {ddl}"))

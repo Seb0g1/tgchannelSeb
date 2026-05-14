@@ -26,6 +26,8 @@ export type Product = {
   category: string | null
   description: string | null
   price: string | null
+  page_price: string | null
+  page_price_checked_at: string | null
   stock: number | null
   url: string | null
   order_url: string | null
@@ -90,6 +92,7 @@ export type RecommendationCard = {
     name: string
     brand: string | null
     price: string | null
+    page_price: string | null
     stock: number | null
     is_active: boolean
     is_published: boolean
