@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from html import escape
 from io import BytesIO
@@ -236,7 +237,9 @@ class PostService:
             if product is None:
                 raise ValueError("Product not found")
             images = self._product_images(product)
-            text = self._prepare_telegram_html(repo, draft.text)
+            public_text = self._normalize_order_text(draft.text, product)
+            text = self._prepare_telegram_html(repo, public_text)
+            order_markup = self._order_markup(product)
 
         if self.settings.dry_run:
             await app.bot.send_message(self.settings.telegram_owner_id, f"DRY_RUN: пост не отправлен в канал.\n\n{draft.text}")
@@ -248,23 +251,26 @@ class PostService:
             ]
             try:
                 await app.bot.send_media_group(self.settings.telegram_channel_id, media[: self.settings.max_photos_per_post])
-                await self._send_long_text(app, self.settings.telegram_channel_id, tail, parse_html=True)
+                if tail:
+                    await self._send_long_text(app, self.settings.telegram_channel_id, tail, order_markup, parse_html=True)
+                elif order_markup:
+                    await self._send_long_text(app, self.settings.telegram_channel_id, "Заказать можно по кнопке ниже.", order_markup, parse_html=True)
             except BadRequest as exc:
                 logger.warning("Telegram could not fetch media group URLs, falling back to first image upload: %s", exc)
-                sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption, parse_html=True)
+                sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption, order_markup, parse_html=True)
                 if sent:
                     await self._send_long_text(app, self.settings.telegram_channel_id, tail, parse_html=True)
                 else:
-                    await self._send_long_text(app, self.settings.telegram_channel_id, text, parse_html=True)
+                    await self._send_long_text(app, self.settings.telegram_channel_id, text, order_markup, parse_html=True)
         elif images:
             caption, tail = self._split_caption(text)
-            sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption, parse_html=True)
+            sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption, order_markup, parse_html=True)
             if sent:
                 await self._send_long_text(app, self.settings.telegram_channel_id, tail, parse_html=True)
             else:
-                await self._send_long_text(app, self.settings.telegram_channel_id, text, parse_html=True)
+                await self._send_long_text(app, self.settings.telegram_channel_id, text, order_markup, parse_html=True)
         else:
-            await self._send_long_text(app, self.settings.telegram_channel_id, text, parse_html=True)
+            await self._send_long_text(app, self.settings.telegram_channel_id, text, order_markup, parse_html=True)
 
         with self.session_factory() as session:
             repo = Repository(session)
@@ -397,12 +403,34 @@ class PostService:
             rendered = rendered.replace(escape(item.emoji), replacement)
         return rendered
 
+    def _normalize_order_text(self, text: str, product: Product) -> str:
+        url = product.order_url or product.url
+        if not url:
+            return text
+        normalized = text.replace(url, "").strip()
+        normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+        if "кнопк" not in normalized.lower():
+            hashtag_match = re.search(r"(\n[#\wа-яА-ЯёЁ\s#]+)$", normalized)
+            phrase = "Заказать можно по кнопке ниже."
+            if hashtag_match:
+                start = hashtag_match.start(1)
+                normalized = f"{normalized[:start].rstrip()}\n\n{phrase}{normalized[start:]}"
+            else:
+                normalized = f"{normalized}\n\n{phrase}"
+        return normalized.strip()
+
     def _product_images(self, product: Product) -> list[str]:
         images: list[str] = []
         if product.styled_image_path and Path(product.styled_image_path).exists():
             images.append(product.styled_image_path)
         images.extend(url for url in self._load_json_list(product.images_json) if isinstance(url, str) and url.startswith("http"))
         return images
+
+    def _order_markup(self, product: Product) -> InlineKeyboardMarkup | None:
+        url = product.order_url or product.url
+        if not url or not url.startswith(("http://", "https://")):
+            return None
+        return InlineKeyboardMarkup([[InlineKeyboardButton("Заказать", url=url)]])
 
     def _draft_preview(self, draft: Draft, product: Product) -> str:
         return (
