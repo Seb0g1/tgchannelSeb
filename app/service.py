@@ -348,6 +348,8 @@ class PostService:
         slots = self._build_day_slots(posts_per_day, mode, exact_time, start_time, end_time)
         created: list[dict[str, object]] = []
 
+        restored_publications = await self._restore_deleted_publications()
+
         with self.session_factory() as session:
             repo = Repository(session)
             candidates = repo.list_products("new", limit=1000, offset=0)
@@ -407,13 +409,45 @@ class PostService:
             "items": created,
             "mode": mode,
             "lookahead_days": lookahead_days,
+            "restored_publications": restored_publications,
         }
         if app is not None and created:
             await app.bot.send_message(
                 self.settings.telegram_owner_id,
-                f"Автоплан обновлён: создано {len(created)} слотов на {lookahead_days} дн.",
+                f"Автоплан обновлён: создано {len(created)} слотов на {lookahead_days} дн. "
+                f"Возвращено в очередь после проверки: {restored_publications}.",
             )
         return result
+
+    async def _restore_deleted_publications(self, limit: int = 250) -> int:
+        restored = 0
+        with self.session_factory() as session:
+            repo = Repository(session)
+            drafts = repo.list_drafts("published", limit=limit, offset=0, order="desc")
+
+        channel = self.settings.telegram_channel_id.lstrip("@")
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            for draft in drafts:
+                if not draft.telegram_message_id:
+                    continue
+                url = f"https://t.me/{channel}/{draft.telegram_message_id}?embed=1"
+                try:
+                    response = await client.get(url)
+                except httpx.HTTPError:
+                    continue
+                body = response.text.lower()
+                exists = response.status_code == 200 and "tgme_widget_message_error" not in body and "message not found" not in body
+                if exists:
+                    continue
+                with self.session_factory() as session:
+                    repo = Repository(session)
+                    product = repo.get_product(draft.product_id)
+                    fresh_draft = repo.get_draft(draft.id)
+                    if product and fresh_draft:
+                        repo.reset_product_publication(product, "deleted")
+                        repo.log_product_event(product.id, "publication_restored", value=str(draft.telegram_message_id), note="auto check")
+                        restored += 1
+        return restored
 
     async def ensure_premium_image(self, product_id: int) -> str | None:
         with self.session_factory() as session:
