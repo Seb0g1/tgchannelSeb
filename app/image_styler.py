@@ -677,7 +677,6 @@ class PollinationsImageStyler:
 
     def _apply_aromat_day_overlay(self, image_bytes: bytes, product: Product) -> bytes:
         image = Image.open(BytesIO(image_bytes)).convert("RGBA")
-        image = self._remove_generated_corner_branding(image)
         width, height = image.size
         overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
@@ -698,21 +697,30 @@ class PollinationsImageStyler:
         mark_x = pad
         mark_y = y0 + max(12, bar_h // 7)
         mark_size = max(44, min(62, width // 14))
-        logo_width = self._paste_logo_if_available(image, mark_x, mark_y, mark_size, bar_h)
-        if logo_width == 0:
-            self._draw_bottle_mark(draw, mark_x, mark_y, gold, mark_size)
-            logo_width = mark_size
+        self._draw_bottle_mark(draw, mark_x, mark_y, gold, mark_size)
+        logo_width = mark_size
 
         text_x = mark_x + logo_width + max(18, width // 54)
         title_y = y0 + max(20, bar_h // 4)
         subtitle_y = min(y0 + bar_h - 28, title_y + max(28, width // 30))
         draw.text((text_x, title_y), "АРОМАТ ДНЯ", fill=gold, font=title_font)
-        draw.text((text_x, subtitle_y), "premium fragrance edit", fill=cream, font=small_font)
+        draw.text((text_x, subtitle_y), self._overlay_subtitle(product), fill=cream, font=small_font)
 
         image = Image.alpha_composite(image, overlay).convert("RGB")
         output = BytesIO()
         image.save(output, format="PNG", optimize=True)
         return output.getvalue()
+
+    def _overlay_subtitle(self, product: Product) -> str:
+        text = " ".join(
+            str(value or "").lower()
+            for value in (product.name, product.category, product.description)
+        )
+        if any(word in text for word in ("шампун", "маск", "крем", "лосьон", "уход", "волос", "кожа", "очищ")):
+            return "уход и эстетика"
+        if any(word in text for word in ("парф", "aroma", "fragrance", "духи", "туалетная вода", "парфюмерная вода")):
+            return "парфюмерный выбор дня"
+        return "выбор дня"
 
     def _paste_logo_if_available(self, image: Image.Image, x: int, y: int, size: int, bar_h: int) -> int:
         logo_path = Path("data/styled_images/logo.png")
