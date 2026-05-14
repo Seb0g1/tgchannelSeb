@@ -471,7 +471,7 @@ def create_web_app() -> FastAPI:
     @app.patch("/api/settings")
     async def update_app_settings(payload: AppSettingsPayload, _: str = Depends(require_admin)):
         values = payload.model_dump()
-        values["max_products_per_sync"] = min(1000, max(1, int(values["max_products_per_sync"])))
+        values["max_products_per_sync"] = min(30000, max(1, int(values["max_products_per_sync"])))
         values["openrouter_text_model"] = _normalize_openrouter_model(str(values["openrouter_text_model"]))
         with session_factory() as session:
             repo = Repository(session)

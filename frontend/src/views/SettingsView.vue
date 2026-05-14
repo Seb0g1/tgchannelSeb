@@ -131,7 +131,7 @@ onMounted(load)
         </select>
       </label>
       <label class="label">Лимит синхронизации Ozon
-        <input v-model.number="form.max_products_per_sync" class="input" type="number" min="1" max="1000" />
+        <input v-model.number="form.max_products_per_sync" class="input" type="number" min="1" max="30000" />
       </label>
       <label class="label">Интервал автопостинга, минут
         <input v-model.number="form.post_interval_minutes" class="input" type="number" min="1" />

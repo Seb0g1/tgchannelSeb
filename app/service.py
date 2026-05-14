@@ -54,7 +54,7 @@ class PostService:
 
     async def sync_products(self) -> dict[str, object]:
         configured_limit = self._get_int_setting("max_products_per_sync", self.settings.max_products_per_sync)
-        limit = min(1000, max(1, configured_limit))
+        limit = min(30000, max(1, configured_limit))
         products = await self.ozon.fetch_products(limit)
         unique_products, skipped_variants = self._skip_volume_variants(products)
         with self.session_factory() as session:
@@ -352,7 +352,7 @@ class PostService:
 
         with self.session_factory() as session:
             repo = Repository(session)
-            candidates = repo.list_products("new", limit=1000, offset=0)
+            candidates = repo.list_products("new", limit=30000, offset=0)
             scheduled_product_ids = repo.scheduled_product_ids()
             pending_product_ids = {draft.product_id for draft in repo.list_drafts("pending", limit=1000, offset=0)}
             ranked_candidates = [
@@ -856,7 +856,7 @@ class PostService:
     def recommendation_cards(self, limit: int = 3) -> list[dict[str, object]]:
         with self.session_factory() as session:
             repo = Repository(session)
-            candidates = repo.list_products("new", limit=1000, offset=0)
+            candidates = repo.list_products("new", limit=30000, offset=0)
             ranked = self._rank_products(candidates, repo)[:limit]
             return [self._recommendation_payload(product, repo) for product in ranked]
 
