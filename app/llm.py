@@ -233,6 +233,6 @@ class FreeTheAITextGenerator(ProductPromptBuilder):
                 return min(60.0, max(1.0, float(retry_after)))
             except ValueError:
                 pass
-        if response.status_code == 429:
+        if response.status_code in {429, 500, 502, 503, 504}:
             return 180.0
         return min(30.0, 4.0 * attempt)
