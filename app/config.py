@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     pollinations_text_model: str = Field("openai", alias="POLLINATIONS_TEXT_MODEL")
     pollinations_text_timeout_seconds: int = Field(180, alias="POLLINATIONS_TEXT_TIMEOUT_SECONDS")
     pollinations_text_max_tokens: int = Field(900, alias="POLLINATIONS_TEXT_MAX_TOKENS")
-    pollinations_image_model: str = Field("kontext", alias="POLLINATIONS_IMAGE_MODEL")
+    pollinations_image_model: str = Field("zimage", alias="POLLINATIONS_IMAGE_MODEL")
     pollinations_image_width: int = Field(1024, alias="POLLINATIONS_IMAGE_WIDTH")
     pollinations_image_height: int = Field(1280, alias="POLLINATIONS_IMAGE_HEIGHT")
     pollinations_image_quality: str = Field("medium", alias="POLLINATIONS_IMAGE_QUALITY")

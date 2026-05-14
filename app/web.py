@@ -94,7 +94,7 @@ class AppSettingsPayload(BaseModel):
     pollinations_text_model: str = "openai"
     pollinations_text_timeout_seconds: int = 180
     pollinations_text_max_tokens: int = 900
-    pollinations_image_model: str = "kontext"
+    pollinations_image_model: str = "zimage"
     pollinations_image_width: int = 1024
     pollinations_image_height: int = 1280
     pollinations_image_quality: str = "medium"
@@ -363,17 +363,10 @@ def create_web_app() -> FastAPI:
             "llama",
         ]
         fallback_image = [
-            "kontext",
-            "nanobanana",
-            "nanobanana-2",
-            "seedream5",
-            "gptimage",
-            "gpt-image-2",
-            "flux",
             "zimage",
-            "qwen-image",
-            "klein",
-            "p-image-edit",
+            "flux",
+            "gptimage",
+            "gptimage-large",
         ]
         if not api_key:
             return {"pollinations_text": fallback_text, "pollinations_image": fallback_image}
@@ -382,6 +375,7 @@ def create_web_app() -> FastAPI:
         async with httpx.AsyncClient(timeout=20) as client:
             text_models = await fetch_pollinations_models(client, f"{base_url}/text/models", headers, fallback_text)
             image_models = await fetch_pollinations_models(client, f"{base_url}/image/models", headers, fallback_image)
+            image_models = [model for model in fallback_image if model in image_models] or fallback_image
         return {"pollinations_text": text_models, "pollinations_image": image_models}
 
     @app.get("/api/dashboard")

@@ -49,7 +49,7 @@ const form = ref({
   pollinations_text_model: 'openai',
   pollinations_text_timeout_seconds: 180,
   pollinations_text_max_tokens: 900,
-  pollinations_image_model: 'kontext',
+  pollinations_image_model: 'zimage',
   pollinations_image_width: 1024,
   pollinations_image_height: 1280,
   pollinations_image_quality: 'medium',
@@ -63,6 +63,7 @@ async function load() {
     ...data,
     text_engine: 'pollinations',
     image_engine: 'pollinations',
+    pollinations_image_model: data.pollinations_image_model === 'kontext' ? 'zimage' : (data.pollinations_image_model || 'zimage'),
   }
 
   try {
@@ -71,7 +72,7 @@ async function load() {
   } catch {
     modelOptions.value = {
       pollinations_text: ['openai', 'openai-fast', 'gpt-5.5', 'gemini', 'claude', 'qwen-large', 'mistral'],
-      pollinations_image: ['kontext', 'nanobanana', 'seedream5', 'gptimage', 'gpt-image-2', 'flux', 'zimage', 'klein'],
+      pollinations_image: ['zimage', 'flux', 'gptimage', 'gptimage-large'],
     }
   }
 

@@ -465,6 +465,9 @@ class FreeTheAIImageStyler:
 
 
 class PollinationsImageStyler:
+    FREE_IMAGE_MODELS = {"zimage", "flux", "gptimage", "gptimage-large"}
+    REFERENCE_IMAGE_MODELS = {"gptimage", "gptimage-large"}
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.output_dir = Path("data/styled_images")
@@ -474,13 +477,15 @@ class PollinationsImageStyler:
         if not self.settings.pollinations_api_key:
             raise ImageGenerationError("POLLINATIONS_API_KEY is empty. Add Pollinations key to .env or settings.")
 
+        model = self._normalized_model()
         source_url = self._source_image_url(product)
-        if self.settings.image_generation_mode == "image_to_image" and not source_url:
+        uses_reference = model in self.REFERENCE_IMAGE_MODELS and self.settings.image_generation_mode == "image_to_image"
+        if uses_reference and not source_url:
             raise ImageGenerationError("Product has no source image URL for Pollinations image editing.")
 
         output_path = self.output_dir / f"product_{product.id}.png"
         payload = {
-            "model": self.settings.pollinations_image_model,
+            "model": model,
             "prompt": self._build_prompt(product),
             "n": 1,
             "size": f"{self.settings.pollinations_image_width}x{self.settings.pollinations_image_height}",
@@ -488,7 +493,7 @@ class PollinationsImageStyler:
             "response_format": "b64_json",
             "safe": "true",
         }
-        if source_url and self.settings.image_generation_mode == "image_to_image":
+        if source_url and uses_reference:
             payload["image"] = source_url
 
         headers = {
@@ -498,6 +503,15 @@ class PollinationsImageStyler:
         image_bytes = await self._request_image_generation(headers, payload)
         output_path.write_bytes(image_bytes)
         return str(output_path)
+
+    def _normalized_model(self) -> str:
+        model = (self.settings.pollinations_image_model or "zimage").strip()
+        if model == "kontext":
+            return "zimage"
+        if model not in self.FREE_IMAGE_MODELS:
+            logger.warning("Pollinations image model %s is not in free allowlist; using zimage", model)
+            return "zimage"
+        return model
 
     async def _request_image_generation(self, headers: dict[str, str], payload: dict) -> bytes:
         url = f"{self.settings.pollinations_base_url.rstrip('/')}/v1/images/generations"
@@ -509,6 +523,11 @@ class PollinationsImageStyler:
             for attempt in range(1, max_attempts + 1):
                 try:
                     response = await client.post(url, headers=headers, json=payload)
+                    if response.status_code == 402 and payload.get("model") != "zimage":
+                        logger.warning("Pollinations model %s requires balance, retrying with zimage", payload.get("model"))
+                        payload = {**payload, "model": "zimage"}
+                        payload.pop("image", None)
+                        response = await client.post(url, headers=headers, json=payload)
                     if response.status_code in retry_statuses:
                         last_error = response.text[-1600:]
                         if attempt < max_attempts:
@@ -587,7 +606,7 @@ class PollinationsImageStyler:
     def _build_prompt(self, product: Product) -> str:
         brand = product.brand or "premium fragrance"
         name = product.name or "perfume"
-        if self.settings.image_generation_mode == "image_to_image":
+        if self._normalized_model() in self.REFERENCE_IMAGE_MODELS and self.settings.image_generation_mode == "image_to_image":
             return (
                 "Premium edit of this real product photo for Telegram channel Aromat Day. "
                 "Preserve the exact real bottle, packaging, label, colors and proportions. "
