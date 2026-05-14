@@ -17,7 +17,7 @@ from telegram.error import BadRequest, TelegramError
 from telegram.ext import Application
 
 from app.config import Settings
-from app.llm import FreeTheAITextGenerator, OllamaGenerator, PollinationsTextGenerator, TextGenerationError
+from app.llm import FreeTheAITextGenerator, OllamaGenerator, OpenRouterTextGenerator, PollinationsTextGenerator, TextGenerationError
 from app.models import Draft, Product
 from app.ozon_client import OzonClient
 from app.repository import Repository
@@ -414,6 +414,23 @@ class PostService:
                     self.settings.pollinations_text_timeout_seconds,
                 ),
                 max_tokens=self._get_int_setting("pollinations_text_max_tokens", self.settings.pollinations_text_max_tokens),
+            )
+            try:
+                return await generator.generate_post(product_data, style)
+            except TextGenerationError:
+                raise
+        if engine == "openrouter":
+            generator = OpenRouterTextGenerator(
+                api_key=self._get_str_setting("openrouter_api_key", self.settings.openrouter_api_key or ""),
+                base_url=self._get_str_setting("openrouter_base_url", self.settings.openrouter_base_url),
+                model=self._get_str_setting("openrouter_text_model", self.settings.openrouter_text_model),
+                timeout_seconds=self._get_int_setting(
+                    "openrouter_text_timeout_seconds",
+                    self.settings.openrouter_text_timeout_seconds,
+                ),
+                max_tokens=self._get_int_setting("openrouter_text_max_tokens", self.settings.openrouter_text_max_tokens),
+                site_url=self._get_str_setting("openrouter_site_url", self.settings.openrouter_site_url or ""),
+                site_name=self._get_str_setting("openrouter_site_name", self.settings.openrouter_site_name),
             )
             try:
                 return await generator.generate_post(product_data, style)

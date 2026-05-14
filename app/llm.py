@@ -365,3 +365,107 @@ class PollinationsTextGenerator(ProductPromptBuilder):
         if response.status_code in {500, 502, 503, 504}:
             return 30.0
         return min(30.0, 4.0 * attempt)
+
+
+class OpenRouterTextGenerator(PollinationsTextGenerator):
+    def __init__(
+        self,
+        api_key: str | None,
+        base_url: str,
+        model: str,
+        timeout_seconds: int = 180,
+        max_tokens: int = 900,
+        site_url: str | None = None,
+        site_name: str = "Aromat Day",
+    ) -> None:
+        super().__init__(api_key, base_url, model, timeout_seconds, max_tokens)
+        self.site_url = site_url
+        self.site_name = site_name
+
+    async def generate_post(self, product: ProductData, style: StyleName = "premium") -> str:
+        if not self.api_key:
+            raise TextGenerationError("OPENROUTER_API_KEY is empty. Add OpenRouter key to .env or settings.")
+
+        prompt = self._build_prompt(product, style)
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты пишешь премиальные Telegram-посты о парфюмерии и уходе на русском языке. "
+                        "Нельзя выдумывать факты о товаре. Ответ возвращай только готовым текстом поста "
+                        "без Markdown, HTML, звездочек для жирного текста и сырого URL."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.72,
+            "max_tokens": self.max_tokens,
+            "stream": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "X-OpenRouter-Title": self.site_name,
+        }
+        if self.site_url:
+            headers["HTTP-Referer"] = self.site_url
+        result = await self._request_chat_completion(headers, payload)
+        choices = result.get("choices") or []
+        if not choices:
+            raise TextGenerationError(f"OpenRouter response has no choices: {result}")
+        content = (choices[0].get("message") or {}).get("content") or choices[0].get("text") or ""
+        if not content:
+            raise TextGenerationError(f"OpenRouter response has no text content: {result}")
+        return self._clean(content)
+
+    async def _request_chat_completion(self, headers: dict[str, str], payload: dict) -> dict:
+        url = f"{self.base_url}/chat/completions"
+        retry_statuses = {429, 500, 502, 503, 504}
+        max_attempts = 5
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            last_error = "unknown error"
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = await client.post(url, headers=headers, json=payload)
+                    if response.status_code in retry_statuses:
+                        last_error = response.text[-1600:]
+                        if attempt < max_attempts:
+                            delay = self._retry_delay(response, attempt)
+                            logger.warning(
+                                "OpenRouter text temporary error %s on attempt %s/%s. Retrying in %.1fs: %s",
+                                response.status_code,
+                                attempt,
+                                max_attempts,
+                                delay,
+                                last_error,
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        raise TextGenerationError(
+                            f"OpenRouter text did not return an answer after {max_attempts} attempts "
+                            f"(last HTTP {response.status_code}): {last_error}"
+                        )
+                    response.raise_for_status()
+                    return response.json()
+                except httpx.HTTPStatusError as exc:
+                    detail = exc.response.text[-1600:] if exc.response is not None else str(exc)
+                    raise TextGenerationError(f"OpenRouter text returned HTTP {exc.response.status_code}: {detail}") from exc
+                except httpx.HTTPError as exc:
+                    last_error = str(exc)
+                    if attempt < max_attempts:
+                        delay = min(30.0, 3.0 * attempt)
+                        logger.warning(
+                            "OpenRouter text request failed on attempt %s/%s. Retrying in %.1fs: %s",
+                            attempt,
+                            max_attempts,
+                            delay,
+                            exc,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise TextGenerationError(f"OpenRouter text request failed after {max_attempts} attempts: {exc}") from exc
+
+        raise TextGenerationError(f"OpenRouter text did not return an answer after {max_attempts} attempts: {last_error}")

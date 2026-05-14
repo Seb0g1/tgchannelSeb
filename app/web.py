@@ -97,6 +97,13 @@ class AppSettingsPayload(BaseModel):
     pollinations_text_model: str = "openai"
     pollinations_text_timeout_seconds: int = 180
     pollinations_text_max_tokens: int = 900
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_text_model: str = "openrouter/cypher-alpha:free"
+    openrouter_text_timeout_seconds: int = 180
+    openrouter_text_max_tokens: int = 900
+    openrouter_site_url: str | None = None
+    openrouter_site_name: str = "Aromat Day"
     pollinations_image_model: str = "zimage"
     pollinations_image_width: int = 1024
     pollinations_image_height: int = 1280
@@ -342,6 +349,15 @@ def create_web_app() -> FastAPI:
             "pollinations_text_max_tokens": int(
                 db.get("pollinations_text_max_tokens", settings.pollinations_text_max_tokens)
             ),
+            "openrouter_api_key": db.get("openrouter_api_key", settings.openrouter_api_key or ""),
+            "openrouter_base_url": db.get("openrouter_base_url", settings.openrouter_base_url),
+            "openrouter_text_model": db.get("openrouter_text_model", settings.openrouter_text_model),
+            "openrouter_text_timeout_seconds": int(
+                db.get("openrouter_text_timeout_seconds", settings.openrouter_text_timeout_seconds)
+            ),
+            "openrouter_text_max_tokens": int(db.get("openrouter_text_max_tokens", settings.openrouter_text_max_tokens)),
+            "openrouter_site_url": db.get("openrouter_site_url", settings.openrouter_site_url or ""),
+            "openrouter_site_name": db.get("openrouter_site_name", settings.openrouter_site_name),
             "pollinations_image_model": db.get("pollinations_image_model", settings.pollinations_image_model),
             "pollinations_image_width": int(db.get("pollinations_image_width", settings.pollinations_image_width)),
             "pollinations_image_height": int(db.get("pollinations_image_height", settings.pollinations_image_height)),

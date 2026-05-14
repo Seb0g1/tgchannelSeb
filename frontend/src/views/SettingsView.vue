@@ -16,7 +16,7 @@ const form = ref({
   post_style: 'premium',
   max_products_per_sync: 100,
   post_interval_minutes: 360,
-  text_engine: 'pollinations',
+  text_engine: 'openrouter',
   ollama_model: 'qwen2.5:7b',
   ollama_timeout_seconds: 300,
   ollama_num_predict: 650,
@@ -49,6 +49,13 @@ const form = ref({
   pollinations_text_model: 'openai',
   pollinations_text_timeout_seconds: 180,
   pollinations_text_max_tokens: 900,
+  openrouter_api_key: '',
+  openrouter_base_url: 'https://openrouter.ai/api/v1',
+  openrouter_text_model: 'openrouter/cypher-alpha:free',
+  openrouter_text_timeout_seconds: 180,
+  openrouter_text_max_tokens: 900,
+  openrouter_site_url: 'https://parfum.sebog1.ru',
+  openrouter_site_name: 'Aromat Day',
   pollinations_image_model: 'zimage',
   pollinations_image_width: 1024,
   pollinations_image_height: 1280,
@@ -69,7 +76,6 @@ async function load() {
   form.value = {
     ...form.value,
     ...data,
-    text_engine: 'pollinations',
     pollinations_image_model: data.pollinations_image_model === 'kontext' ? 'zimage' : (data.pollinations_image_model || 'zimage'),
   }
 
@@ -89,7 +95,6 @@ async function load() {
 async function save() {
   saving.value = true
   saved.value = false
-  form.value.text_engine = 'pollinations'
   await api.patch('/settings', form.value)
   saving.value = false
   saved.value = true
@@ -136,29 +141,61 @@ onMounted(load)
     <div class="panel">
       <div class="block-head">
         <div>
-          <div class="eyebrow">pollinations</div>
+          <div class="eyebrow">text generation</div>
           <h2><Sparkles :size="20" /> Тексты постов</h2>
         </div>
       </div>
       <div class="form-grid">
-        <label class="label">API key
-          <input v-model="form.pollinations_api_key" class="input" type="password" autocomplete="off" />
+        <label class="label">Text engine
+          <select v-model="form.text_engine" class="select">
+            <option value="openrouter">openrouter</option>
+            <option value="pollinations">pollinations</option>
+            <option value="ollama">ollama</option>
+          </select>
         </label>
-        <label class="label">Base URL
-          <input v-model="form.pollinations_base_url" class="input" />
-        </label>
-        <label class="label">Модель текста
-          <input v-model="form.pollinations_text_model" class="input" list="pollinations-text-models" />
-          <datalist id="pollinations-text-models">
-            <option v-for="model in modelOptions.pollinations_text" :key="model" :value="model" />
-          </datalist>
-        </label>
-        <label class="label">Timeout текста, секунд
-          <input v-model.number="form.pollinations_text_timeout_seconds" class="input" type="number" min="30" />
-        </label>
-        <label class="label">Максимум токенов
-          <input v-model.number="form.pollinations_text_max_tokens" class="input" type="number" min="200" />
-        </label>
+        <template v-if="form.text_engine === 'openrouter'">
+          <label class="label">OpenRouter API key
+            <input v-model="form.openrouter_api_key" class="input" type="password" autocomplete="off" />
+          </label>
+          <label class="label">OpenRouter base URL
+            <input v-model="form.openrouter_base_url" class="input" />
+          </label>
+          <label class="label">OpenRouter text model
+            <input v-model="form.openrouter_text_model" class="input" />
+          </label>
+          <label class="label">OpenRouter timeout, seconds
+            <input v-model.number="form.openrouter_text_timeout_seconds" class="input" type="number" min="30" />
+          </label>
+          <label class="label">OpenRouter max tokens
+            <input v-model.number="form.openrouter_text_max_tokens" class="input" type="number" min="200" />
+          </label>
+          <label class="label">OpenRouter site URL
+            <input v-model="form.openrouter_site_url" class="input" />
+          </label>
+          <label class="label">OpenRouter site name
+            <input v-model="form.openrouter_site_name" class="input" />
+          </label>
+        </template>
+        <template v-if="form.text_engine === 'pollinations'">
+          <label class="label">Pollinations API key
+            <input v-model="form.pollinations_api_key" class="input" type="password" autocomplete="off" />
+          </label>
+          <label class="label">Pollinations base URL
+            <input v-model="form.pollinations_base_url" class="input" />
+          </label>
+          <label class="label">Pollinations text model
+            <input v-model="form.pollinations_text_model" class="input" list="pollinations-text-models" />
+            <datalist id="pollinations-text-models">
+              <option v-for="model in modelOptions.pollinations_text" :key="model" :value="model" />
+            </datalist>
+          </label>
+          <label class="label">Pollinations timeout, seconds
+            <input v-model.number="form.pollinations_text_timeout_seconds" class="input" type="number" min="30" />
+          </label>
+          <label class="label">Pollinations max tokens
+            <input v-model.number="form.pollinations_text_max_tokens" class="input" type="number" min="200" />
+          </label>
+        </template>
       </div>
     </div>
 
