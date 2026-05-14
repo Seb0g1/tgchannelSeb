@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+from html import escape
 from io import BytesIO
 from collections.abc import Callable
 
 import httpx
 from sqlalchemy.orm import Session
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import Application
 
@@ -36,7 +38,8 @@ class PostService:
         self.generator = generator
 
     async def sync_products(self) -> int:
-        products = await self.ozon.fetch_products(self.settings.max_products_per_sync)
+        limit = self._get_int_setting("max_products_per_sync", self.settings.max_products_per_sync)
+        products = await self.ozon.fetch_products(limit)
         with self.session_factory() as session:
             repo = Repository(session)
             for product in products:
@@ -63,14 +66,17 @@ class PostService:
                 return existing
             product_data = repo.product_to_data(product)
 
-        text = await self.generator.generate_post(product_data, self.settings.post_style)
+        style = self._get_str_setting("post_style", self.settings.post_style)
+        model = self._get_str_setting("ollama_model", self.settings.ollama_model)
+        self.generator.model = model
+        text = await self.generator.generate_post(product_data, style)
 
         with self.session_factory() as session:
             repo = Repository(session)
             fresh_product = repo.get_product(product_id)
             if fresh_product is None:
                 return None
-            return repo.create_draft(fresh_product.id, text, self.settings.post_style)
+            return repo.create_draft(fresh_product.id, text, style)
 
     async def sync_and_prepare(self, app: Application) -> None:
         try:
@@ -79,7 +85,8 @@ class PostService:
             if draft is None:
                 await app.bot.send_message(self.settings.telegram_owner_id, "Новых товаров для постинга нет.")
                 return
-            if self.settings.app_mode == "auto":
+            mode = self._get_str_setting("app_mode", self.settings.app_mode)
+            if mode == "auto":
                 await self.publish_draft(app, draft.id)
             else:
                 await self.send_draft_to_owner(app, draft.id)
@@ -229,32 +236,35 @@ class PostService:
             if product is None:
                 raise ValueError("Product not found")
             images = self._product_images(product)
-            text = draft.text
+            text = self._prepare_telegram_html(repo, draft.text)
 
         if self.settings.dry_run:
-            await app.bot.send_message(self.settings.telegram_owner_id, f"DRY_RUN: пост не отправлен в канал.\n\n{text}")
+            await app.bot.send_message(self.settings.telegram_owner_id, f"DRY_RUN: пост не отправлен в канал.\n\n{draft.text}")
         elif len(images) > 1 and self.settings.max_photos_per_post > 1:
             caption, tail = self._split_caption(text)
-            media = [InputMediaPhoto(media=url, caption=caption if index == 0 else None) for index, url in enumerate(images)]
+            media = [
+                InputMediaPhoto(media=url, caption=caption if index == 0 else None, parse_mode=ParseMode.HTML)
+                for index, url in enumerate(images)
+            ]
             try:
                 await app.bot.send_media_group(self.settings.telegram_channel_id, media[: self.settings.max_photos_per_post])
-                await self._send_long_text(app, self.settings.telegram_channel_id, tail)
+                await self._send_long_text(app, self.settings.telegram_channel_id, tail, parse_html=True)
             except BadRequest as exc:
                 logger.warning("Telegram could not fetch media group URLs, falling back to first image upload: %s", exc)
-                sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption)
+                sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption, parse_html=True)
                 if sent:
-                    await self._send_long_text(app, self.settings.telegram_channel_id, tail)
+                    await self._send_long_text(app, self.settings.telegram_channel_id, tail, parse_html=True)
                 else:
-                    await self._send_long_text(app, self.settings.telegram_channel_id, text)
+                    await self._send_long_text(app, self.settings.telegram_channel_id, text, parse_html=True)
         elif images:
             caption, tail = self._split_caption(text)
-            sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption)
+            sent = await self._send_photo_safely(app, self.settings.telegram_channel_id, images[0], caption, parse_html=True)
             if sent:
-                await self._send_long_text(app, self.settings.telegram_channel_id, tail)
+                await self._send_long_text(app, self.settings.telegram_channel_id, tail, parse_html=True)
             else:
-                await self._send_long_text(app, self.settings.telegram_channel_id, text)
+                await self._send_long_text(app, self.settings.telegram_channel_id, text, parse_html=True)
         else:
-            await self._send_long_text(app, self.settings.telegram_channel_id, text)
+            await self._send_long_text(app, self.settings.telegram_channel_id, text, parse_html=True)
 
         with self.session_factory() as session:
             repo = Repository(session)
@@ -277,13 +287,16 @@ class PostService:
             product_data = repo.product_to_data(product)
             repo.reject_draft(old_draft)
 
-        text = await self.generator.generate_post(product_data, self.settings.post_style)
+        style = self._get_str_setting("post_style", self.settings.post_style)
+        model = self._get_str_setting("ollama_model", self.settings.ollama_model)
+        self.generator.model = model
+        text = await self.generator.generate_post(product_data, style)
         with self.session_factory() as session:
             repo = Repository(session)
             product = repo.get_product(product_id)
             if product is None:
                 raise ValueError("Product not found")
-            new_draft = repo.create_draft(product.id, text, self.settings.post_style)
+            new_draft = repo.create_draft(product.id, text, style)
         await self.send_draft_to_owner(app, new_draft.id)
         return new_draft.id
 
@@ -317,6 +330,27 @@ class PostService:
             session.commit()
             return True
 
+    def _get_str_setting(self, key: str, default: str) -> str:
+        with self.session_factory() as session:
+            repo = Repository(session)
+            return repo.get_setting(key, default) or default
+
+    def _get_int_setting(self, key: str, default: int) -> int:
+        value = self._get_str_setting(key, str(default))
+        try:
+            return int(value)
+        except ValueError:
+            return default
+
+    def _prepare_telegram_html(self, repo: Repository, text: str) -> str:
+        rendered = escape(text)
+        for item in repo.list_premium_emojis(include_inactive=False):
+            if not item.telegram_custom_emoji_id:
+                continue
+            replacement = f'<tg-emoji emoji-id="{escape(item.telegram_custom_emoji_id)}">{escape(item.emoji)}</tg-emoji>'
+            rendered = rendered.replace(escape(item.emoji), replacement)
+        return rendered
+
     def _product_images(self, product: Product) -> list[str]:
         return [url for url in self._load_json_list(product.images_json) if isinstance(url, str) and url.startswith("http")]
 
@@ -342,6 +376,7 @@ class PostService:
         chat_id: int | str,
         text: str,
         reply_markup: InlineKeyboardMarkup | None = None,
+        parse_html: bool = False,
     ) -> None:
         text = text.strip()
         first = True
@@ -351,7 +386,12 @@ class PostService:
                 split_at = chunk.rfind("\n")
                 if split_at > 1000:
                     chunk = chunk[:split_at]
-            await app.bot.send_message(chat_id, chunk.strip(), reply_markup=reply_markup if first else None)
+            await app.bot.send_message(
+                chat_id,
+                chunk.strip(),
+                reply_markup=reply_markup if first else None,
+                parse_mode=ParseMode.HTML if parse_html else None,
+            )
             first = False
             text = text[len(chunk) :].strip()
 
@@ -362,9 +402,16 @@ class PostService:
         photo_url: str,
         caption: str,
         reply_markup: InlineKeyboardMarkup | None = None,
+        parse_html: bool = False,
     ) -> bool:
         try:
-            await app.bot.send_photo(chat_id=chat_id, photo=photo_url, caption=caption, reply_markup=reply_markup)
+            await app.bot.send_photo(
+                chat_id=chat_id,
+                photo=photo_url,
+                caption=caption,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML if parse_html else None,
+            )
             return True
         except BadRequest as exc:
             logger.warning("Telegram could not fetch photo URL, trying manual upload: %s", exc)
@@ -374,7 +421,13 @@ class PostService:
             return False
 
         try:
-            await app.bot.send_photo(chat_id=chat_id, photo=image, caption=caption, reply_markup=reply_markup)
+            await app.bot.send_photo(
+                chat_id=chat_id,
+                photo=image,
+                caption=caption,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML if parse_html else None,
+            )
             return True
         except TelegramError as exc:
             logger.warning("Telegram photo upload fallback failed: %s", exc)

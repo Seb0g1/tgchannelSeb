@@ -3,7 +3,18 @@ import axios from 'axios'
 export const api = axios.create({
   baseURL: '/api',
   timeout: 180000,
+  withCredentials: true,
 })
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401 && window.location.pathname !== '/login') {
+      window.location.href = '/login'
+    }
+    return Promise.reject(error)
+  },
+)
 
 export type Product = {
   id: number
@@ -45,4 +56,12 @@ export type PremiumEmoji = {
   telegram_custom_emoji_id: string | null
   description: string | null
   is_active: boolean
+}
+
+export type ScheduledPost = {
+  id: number
+  draft_id: number
+  scheduled_at: string
+  status: string
+  created_at: string | null
 }

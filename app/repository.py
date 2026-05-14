@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Draft, PremiumEmoji, Product, Setting
+from app.models import Draft, PremiumEmoji, Product, ScheduledPost, Setting
 from app.schemas import ProductData
 
 
@@ -226,6 +227,26 @@ class Repository:
         self.session.commit()
         return True
 
+    def list_scheduled_posts(self, status: str = "scheduled", limit: int = 100, offset: int = 0) -> list[ScheduledPost]:
+        stmt = select(ScheduledPost).order_by(ScheduledPost.scheduled_at.asc()).limit(limit).offset(offset)
+        if status != "all":
+            stmt = stmt.where(ScheduledPost.status == status)
+        return list(self.session.scalars(stmt))
+
+    def create_scheduled_post(self, draft_id: int, scheduled_at: datetime) -> ScheduledPost:
+        item = ScheduledPost(draft_id=draft_id, scheduled_at=scheduled_at)
+        self.session.add(item)
+        self.session.commit()
+        return item
+
+    def delete_scheduled_post(self, scheduled_id: int) -> bool:
+        item = self.session.get(ScheduledPost, scheduled_id)
+        if item is None:
+            return False
+        self.session.delete(item)
+        self.session.commit()
+        return True
+
     def set_setting(self, key: str, value: str) -> None:
         setting = self.session.get(Setting, key)
         if setting is None:
@@ -238,3 +259,6 @@ class Repository:
     def get_setting(self, key: str, default: str | None = None) -> str | None:
         setting = self.session.get(Setting, key)
         return setting.value if setting else default
+
+    def get_settings_map(self) -> dict[str, str]:
+        return {item.key: item.value for item in self.session.scalars(select(Setting))}

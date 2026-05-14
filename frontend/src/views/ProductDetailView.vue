@@ -8,6 +8,7 @@ const route = useRoute()
 const loading = ref(true)
 const saving = ref(false)
 const generating = ref(false)
+const imageMessage = ref('')
 const product = ref<Product | null>(null)
 const attributes = ref<Array<{ name: string; value: string }>>([])
 const drafts = ref<Draft[]>([])
@@ -41,6 +42,12 @@ async function createDraft() {
   await api.post(`/products/${productId.value}/draft`)
   generating.value = false
   await load()
+}
+
+async function generateImage() {
+  imageMessage.value = ''
+  const { data } = await api.post(`/products/${productId.value}/premium-image`)
+  imageMessage.value = data.message || data.status
 }
 
 onMounted(load)
@@ -88,6 +95,8 @@ onMounted(load)
             <label class="switch"><input v-model="form.is_active" type="checkbox" /> товар актуален</label>
             <label class="switch"><input v-model="form.is_excluded" type="checkbox" /> исключить из очереди</label>
             <button class="button" :disabled="saving" @click="save">{{ saving ? 'Сохраняю...' : 'Сохранить' }}</button>
+            <button class="button secondary" type="button" @click="generateImage">Premium-картинка</button>
+            <span v-if="imageMessage" class="pill gold">{{ imageMessage }}</span>
           </div>
         </div>
 

@@ -31,9 +31,12 @@ class Settings(BaseSettings):
     log_level: str = Field("INFO", alias="LOG_LEVEL")
     web_admin_username: str = Field("admin", alias="WEB_ADMIN_USERNAME")
     web_admin_password: str = Field("change_me", alias="WEB_ADMIN_PASSWORD")
+    web_session_secret: str = Field("change_me_session_secret", alias="WEB_SESSION_SECRET")
     web_host: str = Field("0.0.0.0", alias="WEB_HOST")
     web_port: int = Field(8080, alias="WEB_PORT")
     ozon_visibility: str = Field("VISIBLE", alias="OZON_VISIBILITY")
+    image_engine: str = Field("none", alias="IMAGE_ENGINE")
+    comfyui_base_url: str = Field("http://127.0.0.1:8188", alias="COMFYUI_BASE_URL")
 
 
 @lru_cache

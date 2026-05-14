@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bot, Boxes, FileText, Gem, LayoutDashboard } from 'lucide-vue-next'
+import { Bot, Boxes, CalendarDays, FileText, Gem, LayoutDashboard, Settings } from 'lucide-vue-next'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 
 const route = useRoute()
@@ -8,12 +8,15 @@ const items = [
   { to: '/', label: 'Дашборд', icon: LayoutDashboard },
   { to: '/products', label: 'Товары', icon: Boxes },
   { to: '/drafts', label: 'Черновики', icon: FileText },
+  { to: '/schedule', label: 'Календарь', icon: CalendarDays },
   { to: '/emojis', label: 'Premium эмодзи', icon: Gem },
+  { to: '/settings', label: 'Настройки', icon: Settings },
 ]
 </script>
 
 <template>
-  <div class="shell">
+  <RouterView v-if="route.path === '/login'" />
+  <div v-else class="shell">
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark"><Bot :size="22" /></div>

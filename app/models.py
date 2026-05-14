@@ -72,6 +72,16 @@ class PremiumEmoji(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ScheduledPost(Base):
+    __tablename__ = "scheduled_posts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    draft_id: Mapped[int] = mapped_column(Integer, index=True)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="scheduled", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 def make_session_factory(database_url: str) -> sessionmaker[Session]:
     if database_url.startswith("sqlite:///"):
         db_path = urlparse(database_url).path.lstrip("/")

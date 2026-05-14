@@ -42,6 +42,13 @@ async function rejectDraft() {
   await load()
 }
 
+async function publishDraft() {
+  if (!selected.value) return
+  await api.post(`/drafts/${selected.value.id}/publish`)
+  selected.value = null
+  await load()
+}
+
 watch(statusFilter, () => { page.value = 1; load() })
 onMounted(load)
 </script>
@@ -91,6 +98,7 @@ onMounted(load)
         <textarea v-model="editText" class="textarea" />
         <div class="actions">
           <button class="button" :disabled="saving" @click="saveDraft">{{ saving ? 'Сохраняю...' : 'Сохранить текст' }}</button>
+          <button class="button secondary" @click="publishDraft">Опубликовать</button>
           <button class="button danger" @click="rejectDraft">Отклонить</button>
         </div>
       </div>
