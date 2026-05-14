@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from telegram import Bot
 
 from app.config import Settings, get_settings
-from app.image_styler import HuggingFaceImageStyler, ImageGenerationError
+from app.image_styler import HuggingFaceImageStyler, ImageGenerationError, LocalSdcppImageStyler
 from app.llm import OllamaGenerator
 from app.logging_config import setup_logging
 from app.models import Draft, PremiumEmoji, Product, make_session_factory
@@ -64,6 +64,16 @@ class AppSettingsPayload(BaseModel):
     hf_image_width: int = 1024
     hf_image_height: int = 1280
     image_generation_mode: str = "image_to_image"
+    local_sdcpp_bin: str = "/opt/stable-diffusion.cpp/build/bin/sd-cli"
+    local_image_model: str = "/opt/tgchannelSeb/models/sd15-gguf/stable-diffusion-v1-5-Q4_0.gguf"
+    local_image_width: int = 512
+    local_image_height: int = 640
+    local_image_steps: int = 20
+    local_image_strength: float = 0.30
+    local_image_cfg_scale: float = 6.5
+    local_image_seed: int = -1
+    local_image_threads: int = 4
+    local_image_timeout_seconds: int = 1800
 
 
 class ScheduleCreate(BaseModel):
@@ -231,6 +241,16 @@ def create_web_app() -> FastAPI:
             "hf_image_width": int(db.get("hf_image_width", settings.hf_image_width)),
             "hf_image_height": int(db.get("hf_image_height", settings.hf_image_height)),
             "image_generation_mode": db.get("image_generation_mode", settings.image_generation_mode),
+            "local_sdcpp_bin": db.get("local_sdcpp_bin", settings.local_sdcpp_bin),
+            "local_image_model": db.get("local_image_model", settings.local_image_model),
+            "local_image_width": int(db.get("local_image_width", settings.local_image_width)),
+            "local_image_height": int(db.get("local_image_height", settings.local_image_height)),
+            "local_image_steps": int(db.get("local_image_steps", settings.local_image_steps)),
+            "local_image_strength": float(db.get("local_image_strength", settings.local_image_strength)),
+            "local_image_cfg_scale": float(db.get("local_image_cfg_scale", settings.local_image_cfg_scale)),
+            "local_image_seed": int(db.get("local_image_seed", settings.local_image_seed)),
+            "local_image_threads": int(db.get("local_image_threads", settings.local_image_threads)),
+            "local_image_timeout_seconds": int(db.get("local_image_timeout_seconds", settings.local_image_timeout_seconds)),
         }
 
     @app.patch("/api/settings")
@@ -419,10 +439,35 @@ def create_web_app() -> FastAPI:
                     return {"status": "failed", "message": str(exc), "product": product_payload(product)}
                 repo.update_product_styled_image(product, image_path)
                 return {"status": "generated", "message": "Premium image generated.", "product": product_payload(product)}
+            if engine == "local_sdcpp":
+                dynamic_settings = settings.model_copy(
+                    update={
+                        "image_generation_mode": repo.get_setting("image_generation_mode", settings.image_generation_mode),
+                        "local_sdcpp_bin": repo.get_setting("local_sdcpp_bin", settings.local_sdcpp_bin),
+                        "local_image_model": repo.get_setting("local_image_model", settings.local_image_model),
+                        "local_image_width": int(repo.get_setting("local_image_width", str(settings.local_image_width))),
+                        "local_image_height": int(repo.get_setting("local_image_height", str(settings.local_image_height))),
+                        "local_image_steps": int(repo.get_setting("local_image_steps", str(settings.local_image_steps))),
+                        "local_image_strength": float(repo.get_setting("local_image_strength", str(settings.local_image_strength))),
+                        "local_image_cfg_scale": float(repo.get_setting("local_image_cfg_scale", str(settings.local_image_cfg_scale))),
+                        "local_image_seed": int(repo.get_setting("local_image_seed", str(settings.local_image_seed))),
+                        "local_image_threads": int(repo.get_setting("local_image_threads", str(settings.local_image_threads))),
+                        "local_image_timeout_seconds": int(
+                            repo.get_setting("local_image_timeout_seconds", str(settings.local_image_timeout_seconds))
+                        ),
+                    }
+                )
+                styler = LocalSdcppImageStyler(dynamic_settings)
+                try:
+                    image_path = await styler.generate(product)
+                except ImageGenerationError as exc:
+                    return {"status": "failed", "message": str(exc), "product": product_payload(product)}
+                repo.update_product_styled_image(product, image_path)
+                return {"status": "generated", "message": "Local premium image generated.", "product": product_payload(product)}
             if engine != "comfyui":
                 return {
                     "status": "not_configured",
-                    "message": "Set image_engine=huggingface in settings before generation.",
+                    "message": "Set image_engine=local_sdcpp or huggingface in settings before generation.",
                     "product": product_payload(product),
                 }
         return {"status": "queued", "message": "ComfyUI integration placeholder is ready for workflow wiring."}

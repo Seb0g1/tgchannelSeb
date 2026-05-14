@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shlex
+import subprocess
 from io import BytesIO
 from pathlib import Path
 
 import httpx
+from PIL import Image
 from huggingface_hub import InferenceClient
 
 from app.config import Settings
@@ -133,4 +136,146 @@ class HuggingFaceImageStyler:
             "changed product, different bottle, different packaging, fake label, fake logo, text, watermark, "
             "cheap design, low quality, blurry, distorted bottle, extra bottles, clutter, cartoon, "
             "oversaturated, bad reflections, people, hands"
+        )
+
+
+class LocalSdcppImageStyler:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.output_dir = Path("data/styled_images")
+        self.source_dir = Path("data/source_images")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.source_dir.mkdir(parents=True, exist_ok=True)
+
+    async def generate(self, product: Product) -> str:
+        binary_path = Path(self.settings.local_sdcpp_bin)
+        model_path = Path(self.settings.local_image_model)
+        if not binary_path.exists():
+            raise ImageGenerationError(f"stable-diffusion.cpp binary not found: {binary_path}")
+        if not model_path.exists():
+            raise ImageGenerationError(f"Local image model not found: {model_path}")
+
+        source_image = await self._download_source_image(product)
+        if source_image is None:
+            raise ImageGenerationError("Product has no downloadable source image for local premium processing.")
+
+        source_path = self.source_dir / f"product_{product.id}_source.png"
+        output_path = self.output_dir / f"product_{product.id}.png"
+        self._save_source_png(source_image, source_path)
+
+        command = [
+            str(binary_path),
+            "-m",
+            str(model_path),
+            "-p",
+            self._build_prompt(product),
+            "-n",
+            self._negative_prompt(),
+            "-i",
+            str(source_path),
+            "-o",
+            str(output_path),
+            "-W",
+            str(self.settings.local_image_width),
+            "-H",
+            str(self.settings.local_image_height),
+            "--steps",
+            str(self.settings.local_image_steps),
+            "--strength",
+            str(self.settings.local_image_strength),
+            "--cfg-scale",
+            str(self.settings.local_image_cfg_scale),
+            "-s",
+            str(self.settings.local_image_seed),
+            "-t",
+            str(self.settings.local_image_threads),
+            "--rng",
+            "cpu",
+            "--vae-tiling",
+        ]
+
+        def run_generation() -> None:
+            logger.info("Running local image generation: %s", " ".join(shlex.quote(part) for part in command))
+            completed = subprocess.run(
+                command,
+                cwd=str(Path.cwd()),
+                capture_output=True,
+                text=True,
+                timeout=self.settings.local_image_timeout_seconds,
+                check=False,
+            )
+            if completed.returncode != 0:
+                message = (completed.stderr or completed.stdout or "local generation failed").strip()
+                raise ImageGenerationError(message[-1600:])
+            if not output_path.exists():
+                raise ImageGenerationError("stable-diffusion.cpp finished without creating output image.")
+
+        try:
+            await asyncio.to_thread(run_generation)
+        except subprocess.TimeoutExpired as exc:
+            raise ImageGenerationError(f"Local image generation timed out after {exc.timeout} seconds.") from exc
+        except ImageGenerationError:
+            raise
+        except Exception as exc:
+            logger.exception("Local image generation failed")
+            raise ImageGenerationError(str(exc)) from exc
+
+        return str(output_path)
+
+    async def _download_source_image(self, product: Product) -> BytesIO | None:
+        source_url = self._source_image_url(product)
+        if source_url is None:
+            return None
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; aromat-day/1.0)",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(45, connect=15), follow_redirects=True, headers=headers) as client:
+                response = await client.get(source_url)
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "")
+                if "image" not in content_type:
+                    logger.warning("Source URL did not return an image: %s (%s)", source_url, content_type)
+                    return None
+        except httpx.HTTPError as exc:
+            logger.warning("Could not download source product image %s: %s", source_url, exc)
+            return None
+
+        image = BytesIO(response.content)
+        image.seek(0)
+        return image
+
+    def _save_source_png(self, source_image: BytesIO, source_path: Path) -> None:
+        with Image.open(source_image) as image:
+            image.convert("RGB").save(source_path, format="PNG")
+
+    def _source_image_url(self, product: Product) -> str | None:
+        try:
+            images = json.loads(product.images_json or "[]")
+        except json.JSONDecodeError:
+            images = []
+        if not isinstance(images, list):
+            return None
+        for image in images:
+            if isinstance(image, str) and image.startswith("http"):
+                return image
+        return None
+
+    def _build_prompt(self, product: Product) -> str:
+        brand = product.brand or "premium fragrance"
+        name = product.name or "perfume"
+        return (
+            "premium perfume product photo, preserve the exact real bottle and packaging, "
+            "same label, same colors, elegant luxury studio lighting, dark silk background, "
+            "glass reflections, subtle gold accents, clean expensive cosmetic advertising, "
+            "realistic product photography, high detail, no text, no watermark, "
+            f"{brand} {name}"
+        )
+
+    def _negative_prompt(self) -> str:
+        return (
+            "different bottle, changed label, fake logo, changed packaging, text, watermark, "
+            "blurry, low quality, distorted product, extra bottle, hands, people, cartoon"
         )

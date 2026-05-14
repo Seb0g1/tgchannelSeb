@@ -43,6 +43,19 @@ class Settings(BaseSettings):
     hf_image_width: int = Field(1024, alias="HF_IMAGE_WIDTH")
     hf_image_height: int = Field(1280, alias="HF_IMAGE_HEIGHT")
     image_generation_mode: str = Field("image_to_image", alias="IMAGE_GENERATION_MODE")
+    local_sdcpp_bin: str = Field("/opt/stable-diffusion.cpp/build/bin/sd-cli", alias="LOCAL_SDCPP_BIN")
+    local_image_model: str = Field(
+        "/opt/tgchannelSeb/models/sd15-gguf/stable-diffusion-v1-5-Q4_0.gguf",
+        alias="LOCAL_IMAGE_MODEL",
+    )
+    local_image_width: int = Field(512, alias="LOCAL_IMAGE_WIDTH")
+    local_image_height: int = Field(640, alias="LOCAL_IMAGE_HEIGHT")
+    local_image_steps: int = Field(20, alias="LOCAL_IMAGE_STEPS")
+    local_image_strength: float = Field(0.30, alias="LOCAL_IMAGE_STRENGTH")
+    local_image_cfg_scale: float = Field(6.5, alias="LOCAL_IMAGE_CFG_SCALE")
+    local_image_seed: int = Field(-1, alias="LOCAL_IMAGE_SEED")
+    local_image_threads: int = Field(4, alias="LOCAL_IMAGE_THREADS")
+    local_image_timeout_seconds: int = Field(1800, alias="LOCAL_IMAGE_TIMEOUT_SECONDS")
 
 
 @lru_cache

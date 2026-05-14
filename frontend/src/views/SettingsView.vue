@@ -21,6 +21,16 @@ const form = ref({
   hf_image_width: 1024,
   hf_image_height: 1280,
   image_generation_mode: 'image_to_image',
+  local_sdcpp_bin: '/opt/stable-diffusion.cpp/build/bin/sd-cli',
+  local_image_model: '/opt/tgchannelSeb/models/sd15-gguf/stable-diffusion-v1-5-Q4_0.gguf',
+  local_image_width: 512,
+  local_image_height: 640,
+  local_image_steps: 20,
+  local_image_strength: 0.30,
+  local_image_cfg_scale: 6.5,
+  local_image_seed: -1,
+  local_image_threads: 4,
+  local_image_timeout_seconds: 1800,
 })
 
 async function load() {
@@ -95,6 +105,7 @@ onMounted(load)
         <label class="label">Генератор
           <select v-model="form.image_engine" class="select">
             <option value="none">none</option>
+            <option value="local_sdcpp">local_sdcpp</option>
             <option value="huggingface">huggingface</option>
             <option value="comfyui">comfyui</option>
           </select>
@@ -119,6 +130,36 @@ onMounted(load)
         </label>
         <label class="label">ComfyUI URL
           <input v-model="form.comfyui_base_url" class="input" />
+        </label>
+        <label class="label">stable-diffusion.cpp binary
+          <input v-model="form.local_sdcpp_bin" class="input" />
+        </label>
+        <label class="label">Local GGUF model
+          <input v-model="form.local_image_model" class="input" />
+        </label>
+        <label class="label">Local width
+          <input v-model.number="form.local_image_width" class="input" type="number" min="256" step="64" />
+        </label>
+        <label class="label">Local height
+          <input v-model.number="form.local_image_height" class="input" type="number" min="256" step="64" />
+        </label>
+        <label class="label">Local steps
+          <input v-model.number="form.local_image_steps" class="input" type="number" min="1" max="60" />
+        </label>
+        <label class="label">Local strength
+          <input v-model.number="form.local_image_strength" class="input" type="number" min="0.05" max="0.95" step="0.05" />
+        </label>
+        <label class="label">Local CFG scale
+          <input v-model.number="form.local_image_cfg_scale" class="input" type="number" min="1" max="15" step="0.5" />
+        </label>
+        <label class="label">Local seed
+          <input v-model.number="form.local_image_seed" class="input" type="number" />
+        </label>
+        <label class="label">Local CPU threads
+          <input v-model.number="form.local_image_threads" class="input" type="number" min="1" max="16" />
+        </label>
+        <label class="label">Local timeout, seconds
+          <input v-model.number="form.local_image_timeout_seconds" class="input" type="number" min="60" />
         </label>
       </div>
     </div>
