@@ -40,14 +40,14 @@ class OzonClient:
             response.raise_for_status()
             return response.json()
 
-    async def fetch_products(self, limit: int = 20) -> list[ProductData]:
+    async def fetch_products(self, limit: int = 20, include_descriptions: bool = False) -> list[ProductData]:
         product_ids = await self._fetch_product_ids(limit)
         if not product_ids:
             return []
 
         details = await self._fetch_details(product_ids)
         attributes = await self._fetch_attributes(product_ids)
-        descriptions = await self._fetch_descriptions(product_ids)
+        descriptions = await self._fetch_descriptions(product_ids) if include_descriptions else {}
         prices = await self._fetch_prices(product_ids)
         stocks = await self._fetch_stocks(product_ids)
 
@@ -106,28 +106,49 @@ class OzonClient:
 
     async def _fetch_product_ids(self, limit: int) -> list[str]:
         items: list[dict[str, Any]] = []
-        last_id = ""
-        while len(items) < limit:
-            payload = {
-                "filter": {"visibility": self.visibility},
-                "last_id": last_id,
-                "limit": min(100, limit - len(items)),
-            }
-            data = await self._post("/v3/product/list", payload)
-            result = data.get("result", {})
-            batch = result.get("items", [])
-            if not batch:
+        seen_ids: set[str] = set()
+        requested_visibility = (self.visibility or "ALL").upper()
+        visibilities = [requested_visibility]
+        if requested_visibility != "ALL":
+            visibilities.append("ALL")
+
+        for visibility in visibilities:
+            last_id = ""
+            while len(items) < limit:
+                payload = {
+                    "filter": {"visibility": visibility},
+                    "last_id": last_id,
+                    "limit": min(100, limit - len(items)),
+                }
+                data = await self._post("/v3/product/list", payload)
+                result = data.get("result", {})
+                batch = result.get("items", [])
+                if not batch:
+                    break
+                for item in batch:
+                    product_id = str(item.get("product_id") or "")
+                    if not product_id or product_id in seen_ids:
+                        continue
+                    seen_ids.add(product_id)
+                    items.append(item)
+                last_id = result.get("last_id") or ""
+                if not last_id:
+                    break
+            if len(items) >= limit:
                 break
-            items.extend(batch)
-            last_id = result.get("last_id") or ""
-            if not last_id:
-                break
+
         ids = [str(item.get("product_id")) for item in items if item.get("product_id")]
         logger.info("Fetched %s Ozon product ids", len(ids))
         return ids[:limit]
 
     async def fetch_all_product_ids(self, limit: int = 30000) -> list[str]:
         return await self._fetch_product_ids(limit)
+
+    async def fetch_description(self, product_id: str | int | None) -> str | None:
+        if not product_id:
+            return None
+        descriptions = await self._fetch_descriptions([str(product_id)])
+        return descriptions.get(str(product_id))
 
     async def _fetch_details(self, product_ids: list[str]) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []

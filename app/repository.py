@@ -24,7 +24,8 @@ class Repository:
         product.name = data.name
         product.brand = data.brand
         product.category = data.category
-        product.description = data.description
+        if data.description is not None:
+            product.description = data.description
         product.attributes_json = json.dumps(data.attributes, ensure_ascii=False)
         product.images_json = json.dumps(data.images, ensure_ascii=False)
         product.price = data.price
@@ -221,6 +222,10 @@ class Repository:
     def update_product_page_price(self, product: Product, page_price: str | None) -> None:
         product.page_price = page_price
         product.page_price_checked_at = datetime.utcnow() if page_price else None
+        self.session.commit()
+
+    def update_product_description(self, product: Product, description: str) -> None:
+        product.description = description
         self.session.commit()
 
     def update_product_styled_image(self, product: Product, path: str) -> None:

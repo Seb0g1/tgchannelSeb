@@ -928,8 +928,8 @@ def create_web_app() -> FastAPI:
         created: list[dict[str, object]] = []
         with session_factory() as session:
             repo = Repository(session)
-            candidates = repo.list_products("new", limit=1000, offset=0)
-            pending_product_ids = {draft.product_id for draft in repo.list_drafts("pending", limit=1000, offset=0)}
+            candidates = repo.list_products("new", limit=30000, offset=0)
+            pending_product_ids = {draft.product_id for draft in repo.list_drafts("pending", limit=30000, offset=0)}
             scheduled_product_ids = repo.scheduled_product_ids()
             ranked = [
                 product

@@ -14,7 +14,7 @@ const modelOptions = ref({
 const form = ref({
   app_mode: 'manual',
   post_style: 'premium',
-  max_products_per_sync: 1000,
+  max_products_per_sync: 30000,
   post_interval_minutes: 360,
   text_engine: 'openrouter',
   ollama_model: 'qwen2.5:7b',

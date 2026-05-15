@@ -52,10 +52,10 @@ class PostService:
         self.ozon = ozon
         self.generator = generator
 
-    async def sync_products(self) -> dict[str, object]:
-        configured_limit = self._get_int_setting("max_products_per_sync", self.settings.max_products_per_sync)
+    async def sync_products(self, force_limit: int | None = None) -> dict[str, object]:
+        configured_limit = force_limit or self._get_int_setting("max_products_per_sync", self.settings.max_products_per_sync)
         limit = min(30000, max(1, configured_limit))
-        products = await self.ozon.fetch_products(limit)
+        products = await self.ozon.fetch_products(limit, include_descriptions=False)
         unique_products, skipped_variants = self._skip_volume_variants(products)
         with self.session_factory() as session:
             repo = Repository(session)
@@ -152,7 +152,7 @@ class PostService:
     def best_product_candidate(self) -> Product | None:
         with self.session_factory() as session:
             repo = Repository(session)
-            candidates = repo.list_products("new", limit=1000, offset=0)
+            candidates = repo.list_products("new", limit=30000, offset=0)
             ranked = self._rank_products(candidates, repo)
             return ranked[0] if ranked else None
 
@@ -167,6 +167,11 @@ class PostService:
             if existing:
                 return existing
             product_data = repo.product_to_data(product)
+            if not product_data.description and product.product_id:
+                description = await self.ozon.fetch_description(product.product_id)
+                if description:
+                    repo.update_product_description(product, description)
+                    product_data = product_data.model_copy(update={"description": description})
             public_price = await self._resolve_public_page_price(product_data, product, repo)
             if public_price:
                 product_data = product_data.model_copy(update={"page_price": public_price})
@@ -347,14 +352,16 @@ class PostService:
         today = datetime.now(moscow).date()
         slots = self._build_day_slots(posts_per_day, mode, exact_time, start_time, end_time)
         created: list[dict[str, object]] = []
+        requested_slots = lookahead_days * posts_per_day
 
+        sync_report = await self._ensure_catalog_for_schedule(requested_slots)
         restored_publications = await self._restore_deleted_publications()
 
         with self.session_factory() as session:
             repo = Repository(session)
             candidates = repo.list_products("new", limit=30000, offset=0)
             scheduled_product_ids = repo.scheduled_product_ids()
-            pending_product_ids = {draft.product_id for draft in repo.list_drafts("pending", limit=1000, offset=0)}
+            pending_product_ids = {draft.product_id for draft in repo.list_drafts("pending", limit=30000, offset=0)}
             ranked_candidates = [
                 product
                 for product in self._rank_products(candidates, repo)
@@ -410,6 +417,7 @@ class PostService:
             "mode": mode,
             "lookahead_days": lookahead_days,
             "restored_publications": restored_publications,
+            "sync": sync_report,
         }
         if app is not None and created:
             await app.bot.send_message(
@@ -418,6 +426,33 @@ class PostService:
                 f"Возвращено в очередь после проверки: {restored_publications}.",
             )
         return result
+
+    async def _ensure_catalog_for_schedule(self, requested_slots: int) -> dict[str, object] | None:
+        now = datetime.utcnow()
+        with self.session_factory() as session:
+            repo = Repository(session)
+            available_count = repo.count_products("new")
+            raw_last_sync = repo.get_setting("last_ozon_autosync_at", "")
+
+        last_sync: datetime | None = None
+        if raw_last_sync:
+            try:
+                last_sync = datetime.fromisoformat(raw_last_sync)
+            except ValueError:
+                last_sync = None
+
+        catalog_is_short = available_count < max(requested_slots, 30)
+        catalog_is_stale = last_sync is None or (now - last_sync).total_seconds() > 6 * 60 * 60
+        recently_synced = last_sync is not None and (now - last_sync).total_seconds() < 15 * 60
+
+        if not (catalog_is_short or catalog_is_stale) or recently_synced:
+            return None
+
+        report = await self.sync_products(force_limit=30000)
+        with self.session_factory() as session:
+            repo = Repository(session)
+            repo.set_setting("last_ozon_autosync_at", now.isoformat())
+        return report
 
     async def _restore_deleted_publications(self, limit: int = 250) -> int:
         restored = 0
