@@ -30,7 +30,7 @@ onMounted(load)
     <div>
       <div class="eyebrow">custom emoji</div>
       <h1>Premium эмодзи</h1>
-      <p class="muted">Справочник замен: обычный эмодзи, custom emoji ID и смысл.</p>
+      <p class="muted">Справочник замен: обычный эмодзи, custom emoji ID и описание.</p>
     </div>
   </section>
 

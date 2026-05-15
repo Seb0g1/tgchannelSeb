@@ -108,7 +108,7 @@ onMounted(load)
     <div>
       <div class="eyebrow">configuration</div>
       <h1>Настройки</h1>
-      <p class="muted">Публикации, Ozon-синхронизация и генерация через Pollinations.</p>
+      <p class="muted">Публикации, Ozon-синхронизация, генерация текста и premium-картинки.</p>
     </div>
   </section>
 
@@ -146,7 +146,7 @@ onMounted(load)
         </div>
       </div>
       <div class="form-grid">
-        <label class="label">Text engine
+        <label class="label">Генератор текста
           <select v-model="form.text_engine" class="select">
             <option value="openrouter">openrouter</option>
             <option value="pollinations">pollinations</option>
@@ -207,7 +207,7 @@ onMounted(load)
         </div>
       </div>
       <div class="form-grid">
-        <label class="label">Image engine
+        <label class="label">Генератор картинок
           <select v-model="form.image_engine" class="select">
             <option value="codex_sale">codex_sale</option>
             <option value="cloudflare_worker">cloudflare_worker</option>

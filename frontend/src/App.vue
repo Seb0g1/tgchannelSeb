@@ -40,7 +40,7 @@ const items = [
 
       <div class="side-note">
         <span>premium mode</span>
-        <b>Ollama + Ozon + Telegram</b>
+        <b>Ozon + Telegram + AI</b>
       </div>
     </aside>
 
