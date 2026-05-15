@@ -13,10 +13,33 @@ import {
 } from 'lucide-vue-next'
 import { api, type ScheduleRules, type ScheduledPost } from '../api'
 
+type ScheduleApplyResult = {
+  created: number
+  requested: number
+  existing_slots?: number
+  remaining_slots?: number
+  candidate_count?: number
+  used_candidates?: number
+  skipped_text_errors?: number
+  skipped_empty_drafts?: number
+  image_errors?: number
+  restored_publications?: number
+  active_days?: number
+  sync?: {
+    requested: number
+    received: number
+    saved: number
+    skipped_variants: number
+    active: number
+    with_stock: number
+  } | null
+}
+
 const loading = ref(false)
 const saving = ref(false)
 const applying = ref(false)
 const statusMessage = ref('')
+const lastApply = ref<ScheduleApplyResult | null>(null)
 const weekStart = ref(startOfWeek(new Date()))
 const items = ref<ScheduledPost[]>([])
 const rules = ref<ScheduleRules>({
@@ -40,6 +63,7 @@ const weekdayButtons = [
 ]
 
 const days = computed(() => Array.from({ length: 7 }, (_, index) => addDays(weekStart.value, index)))
+const weekItemsCount = computed(() => days.value.reduce((sum, day) => sum + itemsForDay(day).length, 0))
 
 function startOfWeek(date: Date) {
   const value = new Date(date)
@@ -93,6 +117,17 @@ function selectWeekends() {
   rules.value.active_weekdays = [0, 6]
 }
 
+function applyMessage(data: ScheduleApplyResult) {
+  const parts = [`создано ${data.created} из ${data.requested}`]
+  if (data.existing_slots) parts.push(`уже было ${data.existing_slots}`)
+  if (data.remaining_slots) parts.push(`осталось ${data.remaining_slots}`)
+  if (data.candidate_count !== undefined) parts.push(`кандидатов ${data.candidate_count}`)
+  if (data.sync) parts.push(`Ozon: получено ${data.sync.received}, сохранено ${data.sync.saved}`)
+  if (data.restored_publications) parts.push(`возвращено ${data.restored_publications}`)
+  if (data.skipped_text_errors) parts.push(`ошибок текста ${data.skipped_text_errors}`)
+  return `Очередь: ${parts.join(' · ')}.`
+}
+
 async function loadRules() {
   const { data } = await api.get<ScheduleRules>('/schedule/rules')
   rules.value = data
@@ -143,9 +178,10 @@ async function applyRules() {
   applying.value = true
   statusMessage.value = ''
   try {
-    const { data } = await api.post('/schedule/rules/apply')
+    const { data } = await api.post<ScheduleApplyResult>('/schedule/rules/apply')
+    lastApply.value = data
     await loadSchedule()
-    statusMessage.value = `Очередь заполнена: ${data.created} из ${data.requested}.`
+    statusMessage.value = applyMessage(data)
   } catch (error: any) {
     statusMessage.value = error?.response?.data?.detail || error?.response?.data?.message || 'Не удалось применить правила.'
   } finally {
@@ -155,9 +191,7 @@ async function applyRules() {
 
 async function saveAndApply() {
   const saved = await saveRules()
-  if (!saved) {
-    return
-  }
+  if (!saved) return
   await applyRules()
 }
 
@@ -175,8 +209,8 @@ onMounted(load)
       <div class="eyebrow">calendar</div>
       <h1>Очередь публикаций</h1>
       <p class="muted">
-        Здесь задаются только правила: в какие дни публиковать, сколько постов в день и в каком режиме
-        запускать очередь. Дальше система сама выбирает товар, делает текст, картинку и отправляет в Telegram.
+        Настрой правила один раз: дни недели, количество постов и время. Сервис сам подтянет Ozon,
+        выберет товары, создаст текст с картинкой и поставит публикации в очередь.
       </p>
     </div>
     <div class="actions">
@@ -196,20 +230,20 @@ onMounted(load)
       <div>
         <h2><Sparkles :size="18" /> Правила автопостинга</h2>
         <p class="muted">
-          Никакого ручного выбора постов. Только настройки, по которым система будет сама наполнять
-          календарь публикаций.
+          Ручной выбор товаров не нужен. Если каталога мало, автоплан сам запустит синхронизацию Ozon
+          и покажет, сколько кандидатов нашёл.
         </p>
       </div>
       <div class="rules-hint">
         <CalendarDays :size="16" />
-        <span>Автогенерация очереди</span>
+        <span>{{ weekItemsCount }} постов на видимой неделе</span>
       </div>
     </div>
 
     <div class="weekday-actions">
       <button class="button secondary" type="button" @click="selectAllDays">Все дни</button>
-      <button class="button secondary" type="button" @click="selectWorkdays">Пн–Пт</button>
-      <button class="button secondary" type="button" @click="selectWeekends">Сб–Вс</button>
+      <button class="button secondary" type="button" @click="selectWorkdays">Пн-Пт</button>
+      <button class="button secondary" type="button" @click="selectWeekends">Сб-Вс</button>
     </div>
 
     <div class="weekday-grid">
@@ -294,6 +328,15 @@ onMounted(load)
         <strong>{{ rules.lookahead_days }} дней</strong>
       </div>
     </div>
+
+    <div v-if="lastApply" class="schedule-diagnostics">
+      <div><span>Нужно слотов</span><b>{{ lastApply.requested }}</b></div>
+      <div><span>Уже было</span><b>{{ lastApply.existing_slots || 0 }}</b></div>
+      <div><span>Создано</span><b>{{ lastApply.created }}</b></div>
+      <div><span>Кандидатов</span><b>{{ lastApply.candidate_count || 0 }}</b></div>
+      <div><span>Ozon получено</span><b>{{ lastApply.sync?.received || 0 }}</b></div>
+      <div><span>Ошибок текста</span><b>{{ lastApply.skipped_text_errors || 0 }}</b></div>
+    </div>
   </section>
 
   <div v-if="statusMessage" class="status-line">{{ statusMessage }}</div>
@@ -318,7 +361,7 @@ onMounted(load)
 
       <div v-for="item in itemsForDay(day)" :key="item.id" class="schedule-card">
         <div class="schedule-card-head">
-        <b>Черновик #{{ item.draft_id }}</b>
+          <b>Черновик #{{ item.draft_id }}</b>
           <span>{{ new Date(item.scheduled_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }}</span>
         </div>
         <span class="pill" :class="{ green: item.status === 'published', red: item.status === 'failed', gold: item.status === 'scheduled' }">

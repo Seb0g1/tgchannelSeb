@@ -352,10 +352,19 @@ class PostService:
         today = datetime.now(moscow).date()
         slots = self._build_day_slots(posts_per_day, mode, exact_time, start_time, end_time)
         created: list[dict[str, object]] = []
-        requested_slots = lookahead_days * posts_per_day
+        active_days = [
+            today + timedelta(days=day_offset)
+            for day_offset in range(lookahead_days)
+            if (today + timedelta(days=day_offset)).weekday() in active_weekdays
+        ]
+        requested_slots = len(active_days) * posts_per_day
 
         sync_report = await self._ensure_catalog_for_schedule(requested_slots)
         restored_publications = await self._restore_deleted_publications()
+        skipped_text_errors = 0
+        skipped_empty_drafts = 0
+        image_errors = 0
+        existing_slots = 0
 
         with self.session_factory() as session:
             repo = Repository(session)
@@ -380,24 +389,25 @@ class PostService:
             return count
 
         candidate_index = 0
-        for day_offset in range(lookahead_days):
-            day_value = today + timedelta(days=day_offset)
-            if day_value.weekday() not in active_weekdays:
-                continue
+        for day_value in active_days:
             current_count = scheduled_count_for_day(day_value)
+            existing_slots += min(current_count, posts_per_day)
             while current_count < posts_per_day and candidate_index < len(ranked_candidates):
                 product = ranked_candidates[candidate_index]
                 candidate_index += 1
                 try:
                     await self.ensure_premium_image(product.id)
                 except Exception:
+                    image_errors += 1
                     logger.exception("Premium image generation failed while filling schedule for product %s", product.id)
                 try:
                     draft = await self.create_draft_for_product(product.id, force_new=True)
                 except TextGenerationError as exc:
+                    skipped_text_errors += 1
                     logger.warning("Text generation failed while filling schedule for product %s: %s", product.id, exc)
                     continue
                 if draft is None:
+                    skipped_empty_drafts += 1
                     continue
                 slot = slots[min(current_count, len(slots) - 1)]
                 local_dt = datetime.combine(day_value, slot, tzinfo=moscow)
@@ -407,15 +417,23 @@ class PostService:
                     item = repo.create_scheduled_post(draft.id, scheduled_dt)
                     repo.log_product_event(product.id, "auto_scheduled", value=mode, note=slot.strftime("%H:%M"))
                 scheduled_items.append(item)
-                created.append(scheduled_payload(item))
+                created.append(self._scheduled_payload(item))
                 current_count += 1
 
         result = {
             "created": len(created),
-            "requested": lookahead_days * posts_per_day,
+            "requested": requested_slots,
+            "existing_slots": existing_slots,
+            "remaining_slots": max(0, requested_slots - existing_slots - len(created)),
+            "candidate_count": len(ranked_candidates),
+            "used_candidates": candidate_index,
+            "skipped_text_errors": skipped_text_errors,
+            "skipped_empty_drafts": skipped_empty_drafts,
+            "image_errors": image_errors,
             "items": created,
             "mode": mode,
             "lookahead_days": lookahead_days,
+            "active_days": len(active_days),
             "restored_publications": restored_publications,
             "sync": sync_report,
         }
@@ -426,6 +444,15 @@ class PostService:
                 f"Возвращено в очередь после проверки: {restored_publications}.",
             )
         return result
+
+    def _scheduled_payload(self, item) -> dict[str, object]:
+        return {
+            "id": item.id,
+            "draft_id": item.draft_id,
+            "scheduled_at": item.scheduled_at.isoformat() if item.scheduled_at else None,
+            "status": item.status,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        }
 
     async def _ensure_catalog_for_schedule(self, requested_slots: int) -> dict[str, object] | None:
         now = datetime.utcnow()

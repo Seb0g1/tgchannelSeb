@@ -275,6 +275,27 @@ tbody tr:hover td { background: rgba(255, 255, 255, .025); }
   gap: 10px;
   margin-bottom: 12px;
 }
+.schedule-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+.schedule-diagnostics div {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .025);
+  border-radius: 8px;
+  padding: 12px;
+}
+.schedule-diagnostics span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.schedule-diagnostics b {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+}
 .schedule-summary div {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, .025);
@@ -677,7 +698,7 @@ button:disabled {
   .product-hero, .product-layout, .product-stats { grid-template-columns: 1fr; }
   .calendar-workspace { grid-template-columns: 1fr; }
   .schedule-panels, .schedule-form, .bulk-form { grid-template-columns: 1fr; }
-  .rules-grid, .weekday-grid, .schedule-summary, .calendar-grid { grid-template-columns: 1fr; }
+  .rules-grid, .weekday-grid, .schedule-summary, .schedule-diagnostics, .calendar-grid { grid-template-columns: 1fr; }
   .product-media { min-height: 380px; }
   .product-summary h1 { font-size: 31px; }
   .calendar-day { min-height: auto; }
