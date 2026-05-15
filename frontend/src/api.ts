@@ -68,6 +68,18 @@ export type SyncReport = {
   }>
 }
 
+export type DashboardHealth = {
+  scheduled: number
+  scheduled_failed: number
+  app_mode: string
+  text_engine: string
+  image_engine: string
+  max_products_per_sync: number
+  schedule_rules: ScheduleRules
+  last_ozon_autosync_at: string | null
+  warnings: string[]
+}
+
 export type PremiumEmoji = {
   id: number
   label: string

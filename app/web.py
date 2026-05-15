@@ -523,11 +523,40 @@ def create_web_app() -> FastAPI:
             counts = repo.dashboard_counts()
             products, _total = repo.search_products(status="new", limit=8)
             drafts = repo.list_drafts("pending", limit=8)
+            scheduled_count = repo.count_scheduled_posts("scheduled")
+            failed_scheduled_count = repo.count_scheduled_posts("failed")
+            db = repo.get_settings_map()
+            raw_rules = repo.get_setting("schedule_rules", "")
+            last_sync = repo.get_setting("last_ozon_autosync_at", "")
+        try:
+            schedule_rules = normalize_schedule_rules(json.loads(raw_rules) if raw_rules else None)
+        except json.JSONDecodeError:
+            schedule_rules = normalize_schedule_rules(None)
+        warnings: list[str] = []
+        if counts.get("new", 0) < max(10, int(schedule_rules["posts_per_day"]) * int(schedule_rules["lookahead_days"])):
+            warnings.append("Мало новых товаров для автоплана. Запустите синхронизацию Ozon или увеличьте лимит.")
+        if db.get("app_mode", settings.app_mode) != "auto":
+            warnings.append("Режим публикации сейчас manual. Для полностью автоматической работы включите auto.")
+        if not db.get("text_engine", settings.text_engine):
+            warnings.append("Не выбран генератор текста.")
+        if db.get("image_engine", settings.image_engine) in {"", "none"}:
+            warnings.append("Генерация premium-картинок выключена.")
         return {
             "counts": counts,
             "products": [product_payload(item) for item in products],
             "drafts": [draft_payload(item) for item in drafts],
             "featured": post_service.recommendation_cards(3),
+            "health": {
+                "scheduled": scheduled_count,
+                "scheduled_failed": failed_scheduled_count,
+                "app_mode": db.get("app_mode", settings.app_mode),
+                "text_engine": db.get("text_engine", settings.text_engine),
+                "image_engine": db.get("image_engine", settings.image_engine),
+                "max_products_per_sync": int(db.get("max_products_per_sync", settings.max_products_per_sync)),
+                "schedule_rules": schedule_rules,
+                "last_ozon_autosync_at": last_sync,
+                "warnings": warnings,
+            },
         }
 
     @app.post("/api/sync")

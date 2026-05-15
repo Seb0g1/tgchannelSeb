@@ -279,6 +279,12 @@ class Repository:
             stmt = stmt.where(ScheduledPost.status == status)
         return list(self.session.scalars(stmt))
 
+    def count_scheduled_posts(self, status: str = "scheduled") -> int:
+        stmt = select(func.count()).select_from(ScheduledPost)
+        if status != "all":
+            stmt = stmt.where(ScheduledPost.status == status)
+        return int(self.session.scalar(stmt) or 0)
+
     def get_scheduled_post(self, scheduled_id: int) -> ScheduledPost | None:
         return self.session.get(ScheduledPost, scheduled_id)
 
