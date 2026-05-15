@@ -9,6 +9,7 @@ const saved = ref(false)
 const modelOptions = ref({
   pollinations_text: [] as string[],
   pollinations_image: [] as string[],
+  openrouter_text: [] as string[],
 })
 
 const form = ref({
@@ -86,6 +87,13 @@ async function load() {
     modelOptions.value = {
       pollinations_text: ['openai', 'openai-fast', 'gpt-5.5', 'gemini', 'claude', 'qwen-large', 'mistral'],
       pollinations_image: ['zimage', 'flux', 'gptimage', 'gptimage-large'],
+      openrouter_text: [
+        'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+        'openrouter/free',
+        'meta-llama/llama-3.1-8b-instruct:free',
+        'qwen/qwen-2.5-7b-instruct:free',
+        'google/gemini-2.0-flash-exp:free',
+      ],
     }
   }
 
@@ -161,7 +169,10 @@ onMounted(load)
             <input v-model="form.openrouter_base_url" class="input" />
           </label>
           <label class="label">OpenRouter text model
-            <input v-model="form.openrouter_text_model" class="input" />
+            <input v-model="form.openrouter_text_model" class="input" list="openrouter-text-models" />
+            <datalist id="openrouter-text-models">
+              <option v-for="model in modelOptions.openrouter_text" :key="model" :value="model" />
+            </datalist>
           </label>
           <label class="label">OpenRouter timeout, seconds
             <input v-model.number="form.openrouter_text_timeout_seconds" class="input" type="number" min="30" />

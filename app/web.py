@@ -485,6 +485,8 @@ def create_web_app() -> FastAPI:
             repo = Repository(session)
             api_key = repo.get_setting("pollinations_api_key", settings.pollinations_api_key or "")
             base_url = repo.get_setting("pollinations_base_url", settings.pollinations_base_url).rstrip("/")
+            openrouter_base_url = repo.get_setting("openrouter_base_url", settings.openrouter_base_url).rstrip("/")
+            openrouter_api_key = repo.get_setting("openrouter_api_key", settings.openrouter_api_key or "")
 
         fallback_text = [
             "openai",
@@ -506,15 +508,48 @@ def create_web_app() -> FastAPI:
             "gptimage",
             "gptimage-large",
         ]
+        fallback_openrouter_text = [
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+            "openrouter/free",
+            "meta-llama/llama-3.1-8b-instruct:free",
+            "qwen/qwen-2.5-7b-instruct:free",
+            "google/gemini-2.0-flash-exp:free",
+        ]
         if not api_key:
-            return {"pollinations_text": fallback_text, "pollinations_image": fallback_image}
+            return {
+                "pollinations_text": fallback_text,
+                "pollinations_image": fallback_image,
+                "openrouter_text": fallback_openrouter_text,
+            }
 
         headers = {"Authorization": f"Bearer {api_key}"}
         async with httpx.AsyncClient(timeout=20) as client:
             text_models = await fetch_pollinations_models(client, f"{base_url}/text/models", headers, fallback_text)
             image_models = await fetch_pollinations_models(client, f"{base_url}/image/models", headers, fallback_image)
             image_models = [model for model in fallback_image if model in image_models] or fallback_image
-        return {"pollinations_text": text_models, "pollinations_image": image_models}
+            if openrouter_api_key:
+                openrouter_headers = {"Authorization": f"Bearer {openrouter_api_key}"}
+                try:
+                    response = await client.get(f"{openrouter_base_url}/models", headers=openrouter_headers)
+                    response.raise_for_status()
+                    data = response.json()
+                    items = data.get("data") if isinstance(data, dict) else data
+                    openrouter_models = [
+                        str(item.get("id"))
+                        for item in items
+                        if isinstance(item, dict) and item.get("id")
+                    ] if isinstance(items, list) else fallback_openrouter_text
+                    openrouter_models = [model for model in openrouter_models if model.endswith(":free") or model == "openrouter/free"]
+                    openrouter_models = list(dict.fromkeys(openrouter_models)) or fallback_openrouter_text
+                except Exception:
+                    openrouter_models = fallback_openrouter_text
+            else:
+                openrouter_models = fallback_openrouter_text
+        return {
+            "pollinations_text": text_models,
+            "pollinations_image": image_models,
+            "openrouter_text": openrouter_models,
+        }
 
     @app.get("/api/dashboard")
     async def dashboard(_: str = Depends(require_admin)):
