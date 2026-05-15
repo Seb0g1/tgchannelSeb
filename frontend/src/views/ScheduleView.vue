@@ -125,7 +125,7 @@ function applyMessage(data: ScheduleApplyResult) {
   if (data.sync) parts.push(`Ozon: получено ${data.sync.received}, сохранено ${data.sync.saved}`)
   if (data.restored_publications) parts.push(`возвращено ${data.restored_publications}`)
   if (data.skipped_text_errors) parts.push(`ошибок текста ${data.skipped_text_errors}`)
-  return `Очередь: ${parts.join(' · ')}.`
+  return `Очередь заполнена: ${parts.join(' · ')}.`
 }
 
 async function loadRules() {
