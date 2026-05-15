@@ -119,7 +119,7 @@ onMounted(load)
       </div>
     </section>
 
-    <section class="panel section" v-if="featured.length">
+    <section v-if="featured.length" class="panel section">
       <div class="block-head">
         <div>
           <div class="eyebrow">product of the day</div>
@@ -145,7 +145,7 @@ onMounted(load)
       <section class="panel">
         <div class="section">
           <h2>Новые товары</h2>
-          <p class="muted">Первые кандидаты для premium-поста.</p>
+          <p class="muted">Первый пул кандидатов для premium-поста.</p>
         </div>
         <div class="table-wrap">
           <table>
