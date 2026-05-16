@@ -33,6 +33,16 @@ const sourceImage = computed(() => product.value?.images?.[0] || '')
 const premiumImage = computed(() => product.value?.styled_image_url || product.value?.styled_image_path || '')
 const heroImage = computed(() => premiumImage.value || sourceImage.value)
 const busy = computed(() => saving.value || assembling.value || generatingDraft.value || generatingImage.value || checkingPublication.value || refreshingPrice.value)
+const postPrice = computed(() => formatHalfPrice(product.value?.page_price || product.value?.price))
+
+function formatHalfPrice(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return ''
+  const match = String(value).replace(/\u00a0/g, ' ').match(/(\d[\d\s]*(?:[.,]\d+)?)/)
+  if (!match) return String(value)
+  const amount = Number(match[1].replace(/\s/g, '').replace(',', '.'))
+  if (!Number.isFinite(amount)) return String(value)
+  return `${Math.round(amount / 2).toLocaleString('ru-RU')} ₽`
+}
 
 function startProgress(target: typeof draftProgress | typeof imageProgress | typeof assembleProgress, timerName: 'draft' | 'image' | 'assemble') {
   target.value = 8
@@ -285,7 +295,7 @@ onMounted(load)
             <img v-if="heroImage" :src="heroImage" :alt="product.name">
             <div class="telegram-text">{{ latestDraft.text }}</div>
             <button class="telegram-order">
-              <Send :size="15" /> Заказать{{ product.page_price || product.price ? ` · от ${product.page_price || product.price}` : '' }}
+              <Send :size="15" /> Заказать{{ postPrice ? ` · от ${postPrice}` : '' }}
             </button>
           </div>
           <div v-else class="empty compact">Черновика пока нет. Нажмите “Собрать пост”.</div>

@@ -175,6 +175,9 @@ class PostService:
             public_price = await self._resolve_public_page_price(product_data, product, repo)
             if public_price:
                 product_data = product_data.model_copy(update={"page_price": public_price})
+            post_price = self._format_post_price(product_data.page_price or product_data.price)
+            if post_price:
+                product_data = product_data.model_copy(update={"page_price": post_price})
 
         text = await self._generate_post(product_data, style)
         text = self._inject_price_note(text, product_data.page_price or product_data.price)
@@ -1184,7 +1187,7 @@ class PostService:
         return cleaned.replace("**", "").replace("__", "").strip()
 
     def _normalize_price_text(self, text: str, product: Product) -> str:
-        price = self._format_price(product.page_price or product.price)
+        price = self._format_post_price(product.page_price or product.price)
         if not price:
             return text
         return self._inject_price_note(text, price)
@@ -1216,24 +1219,21 @@ class PostService:
         url = product.order_url or product.url
         if not url or not url.startswith(("http://", "https://")):
             return None
-        price = self._format_price(product.page_price or product.price)
+        price = self._format_post_price(product.page_price or product.price)
         label = f"Заказать · от {price}" if price else "Заказать"
         return InlineKeyboardMarkup([[InlineKeyboardButton(label, url=url)]])
 
-    def _format_price(self, value: str | int | float | None) -> str | None:
+    def _format_post_price(self, value: str | int | float | None) -> str | None:
+        return self._format_price(value, multiplier=0.5)
+
+    def _format_price(self, value: str | int | float | None, multiplier: float = 1.0) -> str | None:
         if value in (None, "", 0, "0"):
             return None
         text = str(value).strip()
-        if "\u20bd" in text or "руб" in text.lower():
-            return re.sub(r"\s+", " ", text)
-        raw = re.sub(r"[^\d,\.]", "", text)
-        if not raw:
+        amount = self._parse_price_value(text)
+        if amount is None:
             return text
-        raw = raw.replace(",", ".")
-        try:
-            amount = float(raw)
-        except ValueError:
-            return text
+        amount *= multiplier
         rendered = f"{amount:,.0f}".replace(",", " ") if amount.is_integer() else f"{amount:,.2f}".replace(",", " ")
         return f"{rendered} \u20bd"
 
